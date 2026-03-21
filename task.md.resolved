@@ -1,0 +1,54 @@
+# Smart Campus Entry & Attendance Monitoring System
+
+## Phase 1: Planning
+- [x] Define project scope and architecture
+- [x] Create implementation plan
+
+## Phase 2: Project Setup (Next.js + React)
+- [ ] Initialize Next.js project in esp32 workspace
+- [ ] Install dependencies (Firebase, JWT, bcrypt, Twilio, etc.)
+- [ ] Set up project folder structure
+
+## Phase 3: Frontend – Core Pages
+- [ ] Landing page (index)
+- [ ] Login / Signup page (with password constraints + JWT)
+- [ ] Student Dashboard
+- [ ] Teacher Dashboard
+- [ ] Admin Dashboard
+- [ ] Face Attendance Page (face-api.js)
+- [ ] Campus Entry Logs
+- [ ] Reports Section
+- [ ] Settings Page
+
+## Phase 4: Backend API (Next.js API Routes / Node.js)
+- [ ] Auth APIs (register, login, logout, change-password, JWT)
+- [ ] Student APIs (CRUD, profile, photo upload)
+- [ ] Teacher APIs
+- [ ] Lecture APIs (create, start, stop)
+- [ ] Attendance APIs (RFID, face, manual)
+- [ ] Campus Entry APIs
+- [ ] Analytics APIs
+- [ ] Notification APIs (WhatsApp/email)
+
+## Phase 5: Security
+- [ ] JWT middleware
+- [ ] bcrypt password hashing
+- [ ] Rate limiting
+- [ ] Input sanitization (XSS protection)
+- [ ] Password policy enforcement
+- [ ] Admin default account (admin@admin / admin@admin)
+
+## Phase 6: ESP32 Firmware
+- [ ] Complete firmware code (WiFi + RFID + Ultrasonic + Buzzer)
+- [ ] Circuit diagram description & wiring table
+
+## Phase 7: Assets & Diagrams
+- [ ] System architecture diagram image
+- [ ] Circuit diagram image
+- [ ] ER diagram
+
+## Phase 8: Verification
+- [ ] Run dev server and verify all pages load
+- [ ] Test login flow with admin credentials
+- [ ] Test password policy validation
+- [ ] Verify navigation between dashboards

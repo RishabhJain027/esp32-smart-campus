@@ -1,0 +1,37 @@
+
+> psr-campus@1.0.0 build
+> next build
+
+  ▲ Next.js 14.2.3
+  - Environments: .env.local
+
+   Creating an optimized production build ...
+Failed to compile.
+
+./app/admin/dashboard/page.js
+Module not found: Can't resolve '@/components/DashboardLayout'
+
+https://nextjs.org/docs/messages/module-not-found
+
+./app/admin/entry-logs/page.js
+Module not found: Can't resolve '@/components/DashboardLayout'
+
+https://nextjs.org/docs/messages/module-not-found
+
+./app/admin/reports/page.js
+Module not found: Can't resolve '@/components/DashboardLayout'
+
+https://nextjs.org/docs/messages/module-not-found
+
+./app/admin/students/page.js
+Module not found: Can't resolve '@/components/DashboardLayout'
+
+https://nextjs.org/docs/messages/module-not-found
+
+./app/face-attendance/page.js
+Module not found: Can't resolve '@/components/DashboardLayout'
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+> Build failed because of webpack errors
