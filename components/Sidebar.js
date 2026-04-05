@@ -11,6 +11,10 @@ const navConfig = {
         { href: '/admin/students', icon: '🧑‍🎓', label: 'Students' },
         { href: '/admin/teachers', icon: '👨‍🏫', label: 'Teachers' },
         { href: '/admin/lectures', icon: '📚', label: 'Lectures' },
+        { href: '/admin/timetable', icon: '🗓️', label: 'Timetable' },
+        { section: 'ERP' },
+        { href: '/admin/grievances', icon: '📋', label: 'Grievances' },
+        { href: '/admin/academics', icon: '🎓', label: 'Academic Records' },
         { section: 'Security' },
         { href: '/admin/entry-logs', icon: '🚪', label: 'Entry Logs', badge: null },
         { href: '/admin/alerts', icon: '🔔', label: 'Security Alerts' },
@@ -36,9 +40,14 @@ const navConfig = {
         { section: 'Attendance' },
         { href: '/student/attendance', icon: '✅', label: 'My Attendance' },
         { href: '/face-attendance', icon: '📷', label: 'Face Check-In' },
+        { section: 'Campus Life' },
+        { href: '/student/canteen', icon: '🍔', label: 'Canteen POS' },
         { section: 'Profile' },
         { href: '/student/profile', icon: '👤', label: 'My Profile' },
         { href: '/student/profile/face-training', icon: '🧑‍💻', label: 'Face Training' },
+        { section: 'ERP' },
+        { href: '/student/grievances', icon: '📋', label: 'Grievances' },
+        { href: '/student/academics', icon: '🎓', label: 'My Grades' },
         { href: '/student/reports', icon: '📈', label: 'My Reports' },
     ],
 };
@@ -64,8 +73,8 @@ export default function Sidebar({ role = 'student', user = {} }) {
             <div className="sidebar-brand">
                 <div className="sidebar-brand-icon">🏫</div>
                 <div className="sidebar-brand-text">
-                    <h2>PSR Campus</h2>
-                    <span>IoT Attendance System</span>
+                    <h2>SAKEC.AI</h2>
+                    <span>Autonomous Campus</span>
                 </div>
             </div>
 

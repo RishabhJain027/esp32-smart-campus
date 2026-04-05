@@ -1,252 +1,337 @@
 'use client';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 
+// === Floating particle system ===
+function ParticleField() {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let animId;
+    let particles = [];
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    class Particle {
+      constructor() { this.reset(); }
+      reset() {
+        this.x = Math.random() * canvas.width;
+        this.y = Math.random() * canvas.height;
+        this.size = Math.random() * 3 + 0.5;
+        this.speedX = (Math.random() - 0.5) * 0.3;
+        this.speedY = -Math.random() * 0.4 - 0.1;
+        this.opacity = Math.random() * 0.5 + 0.1;
+        this.hue = 190 + Math.random() * 30;
+      }
+      update() {
+        this.x += this.speedX;
+        this.y += this.speedY;
+        this.opacity += Math.sin(Date.now() * 0.001 + this.x) * 0.003;
+        if (this.y < -10 || this.x < -10 || this.x > canvas.width + 10) this.reset();
+        if (this.y < -10) { this.y = canvas.height + 10; }
+      }
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${this.hue}, 90%, 70%, ${Math.max(0, Math.min(1, this.opacity))})`;
+        ctx.fill();
+        // glow
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size * 3, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${this.hue}, 90%, 70%, ${Math.max(0, Math.min(0.1, this.opacity * 0.15))})`;
+        ctx.fill();
+      }
+    }
+    for (let i = 0; i < 80; i++) particles.push(new Particle());
+    function animate() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      particles.forEach(p => { p.update(); p.draw(); });
+      animId = requestAnimationFrame(animate);
+    }
+    animate();
+    return () => { cancelAnimationFrame(animId); window.removeEventListener('resize', resize); };
+  }, []);
+  return <canvas ref={canvasRef} style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1 }} />;
+}
+
+// === Animated counter ===
+function Counter({ end, suffix = '', duration = 2000 }) {
+  const [val, setVal] = useState(0);
+  const [started, setStarted] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const obs = new IntersectionObserver(([e]) => { if (e.isIntersecting) setStarted(true); }, { threshold: 0.5 });
+    if (ref.current) obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!started) return;
+    let start = 0;
+    const step = end / (duration / 16);
+    const timer = setInterval(() => {
+      start += step;
+      if (start >= end) { setVal(end); clearInterval(timer); }
+      else setVal(Math.floor(start));
+    }, 16);
+    return () => clearInterval(timer);
+  }, [started, end, duration]);
+
+  return <span ref={ref}>{val}{suffix}</span>;
+}
+
+// === Stats data ===
+const stats = [
+  { value: 30, suffix: '+', label: 'API Endpoints', icon: '⚡' },
+  { value: 99, suffix: '%', label: 'Uptime SLA', icon: '🛡️' },
+  { value: 5, suffix: 'ms', label: 'ESP32 Latency', icon: '📡' },
+  { value: 24, suffix: '/7', label: 'Monitoring', icon: '👁️' },
+];
+
+const features = [
+  { icon: '🔐', title: 'RFID Access Control', desc: 'MFRC522-powered card authentication with ultrasonic tailgate detection and instant WhatsApp alerts.', color: '#0EA5E9' },
+  { icon: '🧠', title: 'Face Recognition AI', desc: 'Real-time face embedding extraction via ESP32-CAM with vector matching against registered student database.', color: '#22D3EE' },
+  { icon: '📊', title: 'ERP Dashboard', desc: 'SAKEC-grade academic records, timetable management, grievance redressal, and grade analytics.', color: '#38BDF8' },
+  { icon: '🌐', title: 'Google Sheets Sync', desc: 'Faculty-readable live attendance ledger. Every RFID scan appends a row instantly via Google Sheets API.', color: '#0369A1' },
+  { icon: '📲', title: 'WhatsApp Alerts', desc: 'Meta Cloud API integration for unauthorized entry alerts, low attendance warnings, and parent notifications.', color: '#06B6D4' },
+  { icon: '🏫', title: '3D Campus Map', desc: 'Interactive campus visualization with live room occupancy, temperature heatmaps, and gate status overlays.', color: '#2DD4BF' },
+];
+
+const techStack = [
+  { name: 'Next.js 14', icon: '⚛️', desc: 'React Framework' },
+  { name: 'Firebase', icon: '🔥', desc: 'Firestore + Auth' },
+  { name: 'ESP32-S3', icon: '🔌', desc: 'Edge IoT Node' },
+  { name: 'face-api.js', icon: '🧠', desc: 'Face Detection' },
+  { name: 'Google Sheets', icon: '📋', desc: 'Live Ledger' },
+  { name: 'JWT + bcrypt', icon: '🛡️', desc: 'Security Layer' },
+  { name: 'Recharts', icon: '📈', desc: 'Data Viz' },
+  { name: 'WebSockets', icon: '🔗', desc: 'Real-Time Push' },
+];
+
 export default function LandingPage() {
-    const features = [
-        { icon: '🔐', title: 'RFID Entry Control', desc: 'Secure campus gate access with verified RFID card scanning and real-time logging.' },
-        { icon: '📷', title: 'AI Face Recognition', desc: 'face-api.js powered in-browser face matching — no third-party servers needed.' },
-        { icon: '📲', title: 'WhatsApp Alerts', desc: 'Instant Twilio WhatsApp notifications for students & parents on every scan.' },
-        { icon: '☁️', title: 'Firebase Cloud Sync', desc: 'Real-time Firestore database with live teacher dashboard updates in under 2s.' },
-        { icon: '📊', title: 'Analytics Dashboard', desc: 'Attendance heatmaps, trend charts, and absentee alerts for every class.' },
-        { icon: '🌐', title: 'Google Sheets Sync', desc: 'Auto-export attendance to Google Sheets with live API sync.' },
-    ];
+  const [time, setTime] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
 
-    const stats = [
-        { value: '3', label: 'User Roles' },
-        { value: '30+', label: 'REST APIs' },
-        { value: '2s', label: 'Real-time Sync' },
-        { value: '99%', label: 'Uptime Target' },
-    ];
+  useEffect(() => {
+    const t = setInterval(() => setTime(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })), 1000);
+    return () => clearInterval(t);
+  }, []);
 
-    const modules = [
-        { icon: '🚪', label: 'Campus Entry' },
-        { icon: '📡', label: 'RFID Scan' },
-        { icon: '🤖', label: 'Face AI' },
-        { icon: '☁️', label: 'Cloud DB' },
-        { icon: '📋', label: 'Sheets Sync' },
-        { icon: '💬', label: 'WhatsApp' },
-        { icon: '👤', label: 'Student Profiles' },
-        { icon: '👨‍🏫', label: 'Teacher Portal' },
-    ];
+  useEffect(() => {
+    const fadeEls = document.querySelectorAll('.ocean-fade');
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('ocean-visible'); });
+    }, { threshold: 0.1, rootMargin: '0px 0px -60px 0px' });
+    fadeEls.forEach(el => obs.observe(el));
+    return () => obs.disconnect();
+  }, []);
 
-    return (
-        <div style={{ minHeight: '100vh', overflowX: 'hidden' }}>
-            {/* ── HERO ── */}
-            <section style={{
-                minHeight: '100vh',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '80px 24px 60px',
-                position: 'relative',
-                textAlign: 'center',
-                overflow: 'hidden',
-            }}>
-                {/* Background blobs */}
-                <div style={{
-                    position: 'absolute', top: '15%', left: '10%',
-                    width: 600, height: 600,
-                    background: 'radial-gradient(circle, rgba(59,130,246,0.12) 0%, transparent 70%)',
-                    borderRadius: '50%', pointerEvents: 'none',
-                }} />
-                <div style={{
-                    position: 'absolute', bottom: '10%', right: '5%',
-                    width: 500, height: 500,
-                    background: 'radial-gradient(circle, rgba(6,182,212,0.1) 0%, transparent 70%)',
-                    borderRadius: '50%', pointerEvents: 'none',
-                }} />
+  return (
+    <div className="ocean-landing">
+      <ParticleField />
 
-                {/* Nav */}
-                <nav style={{
-                    position: 'fixed', top: 0, left: 0, right: 0,
-                    height: 64,
-                    background: 'rgba(255,255,255,0.85)',
-                    backdropFilter: 'blur(20px)',
-                    borderBottom: '1px solid var(--border)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '0 40px',
-                    zIndex: 100,
-                }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontSize: 24 }}>🏫</span>
-                        <div>
-                            <div style={{ fontSize: 15, fontWeight: 800, lineHeight: 1.2 }}>PSR Campus</div>
-                            <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>IoT Attendance System</div>
-                        </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                        <Link href="/login" className="btn btn-outline btn-sm">Sign In</Link>
-                        <Link href="/login?tab=signup" className="btn btn-primary btn-sm">Get Started</Link>
-                    </div>
-                </nav>
-
-                {/* Hero content */}
-                <div style={{ position: 'relative', zIndex: 1, maxWidth: 820 }}>
-                    <div className="badge badge-blue animate-fade-in" style={{ marginBottom: 24, fontSize: 13, padding: '6px 16px' }}>
-                        🎓 College Project · Finals-Ready · Startup-Grade
-                    </div>
-
-                    <h1 style={{
-                        fontSize: 'clamp(36px, 6vw, 72px)',
-                        fontWeight: 900,
-                        lineHeight: 1.05,
-                        letterSpacing: '-0.03em',
-                        marginBottom: 24,
-                        background: 'linear-gradient(135deg, #0f172a 30%, #2563eb 60%, #0891b2)',
-                        backgroundSize: '200% 200%',
-                        WebkitBackgroundClip: 'text',
-                        WebkitTextFillColor: 'transparent',
-                        animation: 'gradientShift 4s ease infinite',
-                    }}>
-                        AI-Powered Smart<br />Campus Attendance
-                    </h1>
-
-                    <p style={{ fontSize: 18, color: 'var(--text-secondary)', maxWidth: 620, margin: '0 auto 40px', lineHeight: 1.7 }}>
-                        IoT · RFID · Face Recognition · Cloud Database · WhatsApp Notifications —
-                        a startup-grade attendance & entry system built for modern campuses.
-                    </p>
-
-                    <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-                        <Link href="/login" className="btn btn-primary btn-lg">
-                            🚀 Launch Dashboard
-                        </Link>
-                        <button className="btn btn-outline btn-lg" onClick={() => document.getElementById('features').scrollIntoView({ behavior: 'smooth' })}>
-                            Explore Features
-                        </button>
-                    </div>
-
-                    {/* Stats bar */}
-                    <div style={{
-                        display: 'flex', gap: 0, justifyContent: 'center',
-                        marginTop: 60,
-                        background: 'var(--bg-card)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 'var(--radius-xl)',
-                        overflow: 'hidden',
-                        maxWidth: 560,
-                        margin: '60px auto 0',
-                    }}>
-                        {stats.map((s, i) => (
-                            <div key={i} style={{
-                                flex: 1, padding: '20px 16px', textAlign: 'center',
-                                borderRight: i < stats.length - 1 ? '1px solid var(--border)' : 'none',
-                            }}>
-                                <div style={{ fontSize: 28, fontWeight: 900, color: 'var(--color-blue)', letterSpacing: '-0.02em' }}>{s.value}</div>
-                                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>{s.label}</div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            {/* ── MODULES ── */}
-            <section style={{ padding: '80px 32px', background: 'var(--bg-secondary)' }}>
-                <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-                    <h2 style={{ textAlign: 'center', fontSize: 36, fontWeight: 800, marginBottom: 8 }}>8 Core Modules</h2>
-                    <p style={{ textAlign: 'center', color: 'var(--text-muted)', marginBottom: 48, fontSize: 15 }}>Everything integrated in one system</p>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
-                        {modules.map((m, i) => (
-                            <div key={i} className="card" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 20px', flex: '0 0 auto' }}>
-                                <span style={{ fontSize: 24 }}>{m.icon}</span>
-                                <span style={{ fontWeight: 600, fontSize: 14 }}>{m.label}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            {/* ── FEATURES ── */}
-            <section id="features" style={{ padding: '80px 32px' }}>
-                <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-                    <h2 style={{ textAlign: 'center', fontSize: 36, fontWeight: 800, marginBottom: 8 }}>Why PSR Campus?</h2>
-                    <p style={{ textAlign: 'center', color: 'var(--text-muted)', marginBottom: 48, fontSize: 15 }}>Enterprise-grade features in a college project</p>
-                    <div className="grid-3" style={{ gap: 20 }}>
-                        {features.map((f, i) => (
-                            <div key={i} className="card" style={{ padding: '28px 24px' }}>
-                                <div style={{ fontSize: 36, marginBottom: 16 }}>{f.icon}</div>
-                                <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 10 }}>{f.title}</h3>
-                                <p style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.7 }}>{f.desc}</p>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            {/* ── FLOW ── */}
-            <section style={{ padding: '80px 32px', background: 'var(--bg-secondary)' }}>
-                <div style={{ maxWidth: 900, margin: '0 auto', textAlign: 'center' }}>
-                    <h2 style={{ fontSize: 36, fontWeight: 800, marginBottom: 8 }}>System Data Flow</h2>
-                    <p style={{ color: 'var(--text-muted)', marginBottom: 48, fontSize: 15 }}>From RFID scan to WhatsApp — end to end in seconds</p>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        {['RFID Scan', 'ESP32', 'REST API', 'Firestore', 'Dashboard', 'Sheets', 'WhatsApp'].map((step, i, arr) => (
-                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <div style={{
-                                    padding: '10px 16px',
-                                    background: i === 0 ? 'var(--grad-blue)' : 'var(--bg-card)',
-                                    border: '1px solid var(--border)',
-                                    borderRadius: 'var(--radius-sm)',
-                                    fontSize: 13,
-                                    fontWeight: 600,
-                                    color: i === 0 ? '#fff' : 'var(--text-secondary)',
-                                }}>{step}</div>
-                                {i < arr.length - 1 && <span style={{ color: 'var(--text-muted)', fontSize: 18 }}>→</span>}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            {/* ── ROLES ── */}
-            <section style={{ padding: '80px 32px' }}>
-                <div style={{ maxWidth: 900, margin: '0 auto' }}>
-                    <h2 style={{ textAlign: 'center', fontSize: 36, fontWeight: 800, marginBottom: 8 }}>Three Portals</h2>
-                    <p style={{ textAlign: 'center', color: 'var(--text-muted)', marginBottom: 48 }}>Separate dashboards optimized for each role</p>
-                    <div className="grid-3" style={{ gap: 20 }}>
-                        {[
-                            { role: 'Admin', icon: '🛠️', color: 'var(--color-red)', items: ['Manage Students & Teachers', 'Assign RFID Cards', 'Entry Logs & Alerts', 'System Settings'] },
-                            { role: 'Teacher', icon: '👨‍🏫', color: 'var(--color-blue)', items: ['Start/Stop Attendance', 'Live Student Feed', 'Download Excel Reports', 'Send WhatsApp Alerts'] },
-                            { role: 'Student', icon: '🧑‍🎓', color: 'var(--color-green)', items: ['Attendance Dashboard', 'RFID / Face Check-In', 'LinkedIn Profile', 'Monthly Reports'] },
-                        ].map((r, i) => (
-                            <div key={i} className="card" style={{ textAlign: 'center', padding: '32px 24px', borderTop: `3px solid ${r.color}` }}>
-                                <div style={{ fontSize: 40, marginBottom: 12 }}>{r.icon}</div>
-                                <h3 style={{ fontSize: 20, fontWeight: 800, marginBottom: 16, color: r.color }}>{r.role}</h3>
-                                <ul style={{ listStyle: 'none', textAlign: 'left' }}>
-                                    {r.items.map((it, j) => (
-                                        <li key={j} style={{ fontSize: 13, color: 'var(--text-secondary)', padding: '6px 0', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8 }}>
-                                            <span style={{ color: r.color }}>✓</span>{it}
-                                        </li>
-                                    ))}
-                                </ul>
-                                <Link href="/login" className="btn btn-primary btn-sm" style={{ marginTop: 20, width: '100%', display: 'flex', justifyContent: 'center' }}>
-                                    Login as {r.role}
-                                </Link>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            {/* ── CTA ── */}
-            <section style={{
-                padding: '80px 32px',
-                background: 'linear-gradient(135deg, rgba(59,130,246,0.1), rgba(6,182,212,0.08))',
-                borderTop: '1px solid var(--border)',
-                textAlign: 'center',
-            }}>
-                <div style={{ maxWidth: 600, margin: '0 auto' }}>
-                    <h2 style={{ fontSize: 36, fontWeight: 800, marginBottom: 16 }}>Ready to go live?</h2>
-                    <p style={{ color: 'var(--text-secondary)', marginBottom: 32, fontSize: 15, lineHeight: 1.7 }}>
-                        Add your Firebase keys and Twilio credentials, connect your ESP32, and your campus goes smart in minutes.
-                    </p>
-                    <Link href="/login" className="btn btn-primary btn-lg" style={{ padding: '16px 48px', fontSize: 18, display: 'inline-flex' }}>
-                        🏫 Open Dashboard
-                    </Link>
-                </div>
-                <div style={{ marginTop: 60, paddingTop: 32, borderTop: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: 13 }}>
-                    PSR Campus System · Built with Next.js, Firebase, ESP32 · 2026
-                </div>
-            </section>
+      {/* ─── NAVIGATION ─── */}
+      <nav className="ocean-nav" id="ocean-nav">
+        <div className="ocean-nav-inner">
+          <Link href="/" className="ocean-logo">
+            <div className="ocean-logo-icon">🏫</div>
+            <div>
+              <div className="ocean-logo-text">SAKEC<span className="ocean-logo-dot">.</span>AI</div>
+              <div className="ocean-logo-sub">AUTONOMOUS CAMPUS</div>
+            </div>
+          </Link>
+          <div className={`ocean-nav-links ${menuOpen ? 'open' : ''}`}>
+            <a href="#features">Features</a>
+            <a href="#architecture">Architecture</a>
+            <a href="#tech">Stack</a>
+            <Link href="/login" className="ocean-nav-cta">Launch Dashboard →</Link>
+          </div>
+          <button className="ocean-hamburger" onClick={() => setMenuOpen(v => !v)} aria-label="Toggle menu">
+            <span /><span /><span />
+          </button>
         </div>
-    );
+      </nav>
+
+      {/* ─── HERO ─── */}
+      <section className="ocean-hero">
+        <div className="ocean-hero-rays" />
+        <div className="ocean-hero-content">
+          <div className="ocean-hero-badge ocean-fade">
+            <span className="ocean-pulse-dot" />
+            SYSTEM ONLINE · {time || '--:--:--'}
+          </div>
+          <h1 className="ocean-hero-title ocean-fade">
+            The Autonomous<br />
+            <span className="ocean-gradient-text">Smart Campus</span>
+          </h1>
+          <p className="ocean-hero-desc ocean-fade">
+            Enterprise AIoT platform merging ESP32 edge nodes, real-time facial recognition, 
+            RFID access control, and a bioluminescent command center — built for SAKEC.
+          </p>
+          <div className="ocean-hero-actions ocean-fade">
+            <Link href="/login" className="ocean-btn-primary" id="hero-launch-btn">
+              🚀 Launch Command Center
+            </Link>
+            <Link href="/login?tab=signup" className="ocean-btn-outline" id="hero-register-btn">
+              ✨ Register Now
+            </Link>
+          </div>
+
+          {/* Stats */}
+          <div className="ocean-hero-stats ocean-fade">
+            {stats.map((s, i) => (
+              <div key={i} className="ocean-stat-item">
+                <div className="ocean-stat-icon">{s.icon}</div>
+                <div className="ocean-stat-value">
+                  <Counter end={s.value} suffix={s.suffix} />
+                </div>
+                <div className="ocean-stat-label">{s.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Scroll hint */}
+        <div className="ocean-scroll-hint">
+          <div className="ocean-scroll-line" />
+          <span>EXPLORE</span>
+        </div>
+      </section>
+
+      {/* ─── FEATURES ─── */}
+      <section id="features" className="ocean-section">
+        <div className="ocean-container">
+          <div className="ocean-section-header ocean-fade">
+            <span className="ocean-section-label">CAPABILITIES</span>
+            <h2 className="ocean-section-title">Enterprise-Grade<br /><span className="ocean-gradient-text">Feature Arsenal</span></h2>
+            <p className="ocean-section-desc">Every component engineered for scale. From edge AI to cloud analytics.</p>
+          </div>
+          <div className="ocean-features-grid">
+            {features.map((f, i) => (
+              <div key={i} className="ocean-feature-card ocean-fade" style={{ animationDelay: `${i * 0.1}s` }}>
+                <div className="ocean-feature-glow" style={{ background: `radial-gradient(circle, ${f.color}15 0%, transparent 70%)` }} />
+                <div className="ocean-feature-icon" style={{ background: `${f.color}15`, color: f.color }}>{f.icon}</div>
+                <h3 className="ocean-feature-title">{f.title}</h3>
+                <p className="ocean-feature-desc">{f.desc}</p>
+                <div className="ocean-feature-line" style={{ background: `linear-gradient(90deg, ${f.color}, transparent)` }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ─── ARCHITECTURE ─── */}
+      <section id="architecture" className="ocean-section ocean-section-alt">
+        <div className="ocean-container">
+          <div className="ocean-section-header ocean-fade">
+            <span className="ocean-section-label">SYSTEM DESIGN</span>
+            <h2 className="ocean-section-title">Data Flow<br /><span className="ocean-gradient-text">Architecture</span></h2>
+          </div>
+          <div className="ocean-arch-flow ocean-fade">
+            {[
+              { icon: '🔌', label: 'ESP32-S3 Edge', sub: 'RFID + Camera + DHT22' },
+              { icon: '📡', label: 'MQTT / REST', sub: 'JWT-Signed Payloads' },
+              { icon: '⚡', label: 'Next.js API', sub: 'Route Handlers' },
+              { icon: '🔥', label: 'Firebase', sub: 'Firestore + Storage' },
+              { icon: '📋', label: 'Google Sheets', sub: 'Live Faculty Ledger' },
+              { icon: '🖥️', label: 'Dashboard', sub: 'Real-Time UI' },
+            ].map((node, i) => (
+              <div key={i} className="ocean-arch-node">
+                <div className="ocean-arch-icon">{node.icon}</div>
+                <div className="ocean-arch-label">{node.label}</div>
+                <div className="ocean-arch-sub">{node.sub}</div>
+                {i < 5 && <div className="ocean-arch-arrow">→</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ─── TECH STACK ─── */}
+      <section id="tech" className="ocean-section">
+        <div className="ocean-container">
+          <div className="ocean-section-header ocean-fade">
+            <span className="ocean-section-label">BUILT WITH</span>
+            <h2 className="ocean-section-title">Professional<br /><span className="ocean-gradient-text">Tech Stack</span></h2>
+          </div>
+          <div className="ocean-tech-grid ocean-fade">
+            {techStack.map((t, i) => (
+              <div key={i} className="ocean-tech-card">
+                <div className="ocean-tech-icon">{t.icon}</div>
+                <div className="ocean-tech-name">{t.name}</div>
+                <div className="ocean-tech-desc">{t.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ─── CTA ─── */}
+      <section className="ocean-section ocean-cta-section">
+        <div className="ocean-container">
+          <div className="ocean-cta-card ocean-fade">
+            <div className="ocean-cta-glow" />
+            <h2 className="ocean-cta-title">Ready to Experience the Future?</h2>
+            <p className="ocean-cta-desc">
+              Register as a student, teacher, or admin. Get approved and access the full 
+              autonomous campus command center.
+            </p>
+            <div className="ocean-cta-actions">
+              <Link href="/login?tab=signup" className="ocean-btn-primary">✨ Create Account</Link>
+              <Link href="/login" className="ocean-btn-outline">🔑 Sign In</Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ─── FOOTER ─── */}
+      <footer className="ocean-footer">
+        <div className="ocean-container">
+          <div className="ocean-footer-inner">
+            <div className="ocean-footer-brand">
+              <div className="ocean-logo" style={{ marginBottom: 12 }}>
+                <div className="ocean-logo-icon">🏫</div>
+                <div>
+                  <div className="ocean-logo-text">SAKEC<span className="ocean-logo-dot">.</span>AI</div>
+                  <div className="ocean-logo-sub">AUTONOMOUS CAMPUS</div>
+                </div>
+              </div>
+              <p style={{ color: 'var(--text-muted)', fontSize: 13, maxWidth: 300 }}>
+                Enterprise AIoT Smart Campus System. ESP32 + Firebase + Next.js.
+              </p>
+            </div>
+            <div className="ocean-footer-links">
+              <div>
+                <h4>Platform</h4>
+                <a href="#features">Features</a>
+                <a href="#architecture">Architecture</a>
+                <a href="#tech">Tech Stack</a>
+              </div>
+              <div>
+                <h4>Access</h4>
+                <Link href="/login">Sign In</Link>
+                <Link href="/login?tab=signup">Register</Link>
+                <Link href="/admin/dashboard">Admin Panel</Link>
+              </div>
+              <div>
+                <h4>Connect</h4>
+                <a href="https://www.linkedin.com/in/rish-abh27/" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+                <a href="https://github.com/RishabhJain027" target="_blank" rel="noopener noreferrer">GitHub</a>
+              </div>
+            </div>
+          </div>
+          <div className="ocean-footer-bottom">
+            <p>© 2026 SAKEC Autonomous Campus · Built by Rishabh Jain · All Rights Reserved</p>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
 }

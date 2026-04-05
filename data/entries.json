@@ -1,0 +1,47 @@
+[
+  {
+    "id": "ent_001",
+    "student_id": "student_001",
+    "name": "Rishabh Jain",
+    "gate": "Main Gate",
+    "method": "RFID",
+    "time": "2026-04-05T09:02:00",
+    "status": "granted"
+  },
+  {
+    "id": "ent_002",
+    "student_id": "student_002",
+    "name": "Priya Sharma",
+    "gate": "Main Gate",
+    "method": "Face",
+    "time": "2026-04-05T09:04:00",
+    "status": "granted"
+  },
+  {
+    "id": "ent_003",
+    "student_id": "student_003",
+    "name": "Arjun Singh",
+    "gate": "Side Gate",
+    "method": "RFID",
+    "time": "2026-04-05T09:05:00",
+    "status": "granted"
+  },
+  {
+    "id": "ent_004",
+    "student_id": "student_004",
+    "name": "Sneha Patel",
+    "gate": "Main Gate",
+    "method": "Face",
+    "time": "2026-04-05T09:08:00",
+    "status": "granted"
+  },
+  {
+    "id": "ent_005",
+    "student_id": "student_001",
+    "name": "Rishabh Jain",
+    "gate": "Main Gate",
+    "method": "RFID",
+    "time": "2026-04-04T09:01:00",
+    "status": "granted"
+  }
+]

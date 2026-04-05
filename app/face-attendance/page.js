@@ -9,7 +9,7 @@ function euclidean(a, b) {
     return Math.sqrt(sum);
 }
 
-const MATCH_THRESHOLD = 0.55;   // face-api.js recommended
+const MATCH_THRESHOLD = 0.65;   // Increased tolerance for single-shot PFP lighting differences
 const SCAN_INTERVAL_MS = 120;
 const AUTO_MARK_COOLDOWN = 5000; // ms between back-to-back auto-marks
 

@@ -40,8 +40,15 @@ export default function AdminDashboard() {
         { id: 3, type: 'info', msg: 'Priya Sharma marked absent – CS201', time: '09:30 AM' },
     ]);
 
+    const statCards = [
+        { icon: '🧑‍🎓', label: 'Total Students', value: '248', change: '+3 this month', up: true, color: '#3b82f6', bg: 'rgba(59,130,246,0.12)' },
+        { icon: '👨‍🏫', label: 'Teachers', value: '18', change: '2 pending', up: false, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+        { icon: '✅', label: 'Present Today', value: '212', change: '84% rate', up: true, color: '#06b6d4', bg: 'rgba(6,182,212,0.12)' },
+        { icon: '🚪', label: 'Gate Entries', value: '234', change: '12 alerts', up: false, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+    ];
+
     const [students, setStudents] = useState(mockStudents);
-    const [stats, setStats] = useState(statCards);
+    const [stats] = useState(statCards);
 
     useEffect(() => {
         const tick = () => setTime(new Date().toLocaleTimeString('en-IN'));
@@ -77,13 +84,6 @@ export default function AdminDashboard() {
 
         return () => clearInterval(t);
     }, []);
-
-    const statCards = [
-        { icon: '🧑‍🎓', label: 'Total Students', value: '248', change: '+3 this month', up: true, color: '#3b82f6', bg: 'rgba(59,130,246,0.12)' },
-        { icon: '👨‍🏫', label: 'Teachers', value: '18', change: '2 pending', up: false, color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
-        { icon: '✅', label: 'Present Today', value: '212', change: '84% rate', up: true, color: '#06b6d4', bg: 'rgba(6,182,212,0.12)' },
-        { icon: '🚪', label: 'Gate Entries', value: '234', change: '12 alerts', up: false, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
-    ];
 
     return (
         <DashboardLayout title="Admin Dashboard" breadcrumb="Overview">

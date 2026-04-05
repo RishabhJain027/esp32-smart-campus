@@ -1,44 +1,27 @@
-/*
- * ===================================================================
- *  PSR CAMPUS ENTRY & ATTENDANCE SYSTEM
- *  ESP32 DevModule Firmware
- *  Version: 1.0.0
- *  Author:  PSR Campus System
- * 
- *  Hardware:
- *    - ESP32 DevKit V1
- *    - MFRC522 RFID Reader (SPI)
- *    - HC-SR04 Ultrasonic Sensor
- *    - Passive Buzzer
- *    - I2C LCD 16x2 (optional)
- * 
- *  Libraries required (install via Arduino Library Manager):
- *    - MFRC522 by GithubCommunity
- *    - ArduinoJson by Benoit Blanchon
- *    - LiquidCrystal_I2C by Frank de Brabander
- * ===================================================================
- */
 
-#include <WiFi.h>
-#include <HTTPClient.h>
-#include <SPI.h>
-#include <MFRC522.h>
 #include <ArduinoJson.h>
-#include <Wire.h>
+#include <HTTPClient.h>
 #include <LiquidCrystal_I2C.h>
+#include <MFRC522.h>
+#include <SPI.h>
+#include <WiFi.h>
+#include <Wire.h>
+
 
 // ── WIFI CONFIG ────────────────────────────────────────────────
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+const char *WIFI_SSID = "One";
+const char *WIFI_PASSWORD = "12345678";
 
 // ── SERVER CONFIG ─────────────────────────────────────────────
-const char* SERVER_BASE   = "https://yourdomain.com";  // or http://192.168.1.X:3000 locally
-const char* API_KEY       = "esp32_secret_2026";        // must match ESP32_API_KEY in .env.local
+const char *SERVER_BASE =
+    "https://yourdomain.com"; // or http://192.168.1.X:3000 locally
+const char *API_KEY =
+    "esp32_secret_2026"; // must match ESP32_API_KEY in .env.local
 
 // ── PIN DEFINITIONS ───────────────────────────────────────────
 // RFID SPI
-#define SS_PIN   5     // SDA / CS
-#define RST_PIN  22    // Reset
+#define SS_PIN 5   // SDA / CS
+#define RST_PIN 4  // Reset (Changed from 22 to avoid conflict with I2C SCL)
 
 // Ultrasonic HC-SR04
 #define TRIG_PIN 12
@@ -49,46 +32,46 @@ const char* API_KEY       = "esp32_secret_2026";        // must match ESP32_API_
 
 // LED status
 #define LED_GREEN_PIN 26
-#define LED_RED_PIN   25
+#define LED_RED_PIN 25
 
 // ── THRESHOLDS ────────────────────────────────────────────────
-#define PERSON_DISTANCE_CM     100   // Max distance to count as "person present"
-#define MULTI_PERSON_THRESHOLD 2     // Buzzer triggers if ≥ 2 persons detected
-#define BUZZER_DURATION_MS     3000  // Buzzer on for 3 seconds
-#define SCAN_COOLDOWN_MS       3000  // Prevent re-scan within 3 seconds
+#define PERSON_DISTANCE_CM 100   // Max distance to count as "person present"
+#define MULTI_PERSON_THRESHOLD 2 // Buzzer triggers if ≥ 2 persons detected
+#define BUZZER_DURATION_MS 3000  // Buzzer on for 3 seconds
+#define SCAN_COOLDOWN_MS 3000    // Prevent re-scan within 3 seconds
 
 // ── OBJECTS ───────────────────────────────────────────────────
 MFRC522 rfid(SS_PIN, RST_PIN);
 LiquidCrystal_I2C lcd(0x27, 16, 2); // Change 0x27 if not found (try 0x3F)
 
 // State
-unsigned long lastScanTime   = 0;
-bool          buzzerActive   = false;
+unsigned long lastScanTime = 0;
+bool buzzerActive = false;
 unsigned long buzzerStartTime = 0;
 
 // ── PROTOTYPES ────────────────────────────────────────────────
 String readRFID();
-int    countPersons();
-void   sendAttendance(String uid, int personCount);
-void   activateBuzzer();
-void   lcdPrint(String line1, String line2 = "");
-void   ledStatus(bool success);
-void   reconnectWiFi();
+int countPersons();
+void sendAttendance(String uid, int personCount);
+void activateBuzzer();
+void lcdPrint(String line1, String line2 = "");
+void ledStatus(bool success);
+void reconnectWiFi();
 
 // ═══════════════════════════════════════════════════════════════
 void setup() {
   Serial.begin(115200);
-  
+
   // Pin setup
-  pinMode(TRIG_PIN,      OUTPUT);
-  pinMode(ECHO_PIN,      INPUT);
-  pinMode(BUZZER_PIN,    OUTPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
   pinMode(LED_GREEN_PIN, OUTPUT);
-  pinMode(LED_RED_PIN,   OUTPUT);
-  
+  pinMode(LED_RED_PIN, OUTPUT);
+
   digitalWrite(BUZZER_PIN, LOW);
   digitalWrite(LED_GREEN_PIN, LOW);
-  digitalWrite(LED_RED_PIN,   LOW);
+  digitalWrite(LED_RED_PIN, LOW);
 
   // LCD init
   Wire.begin(21, 22); // SDA=21, SCL=22
@@ -139,11 +122,14 @@ void loop() {
   }
 
   // ── Scan cooldown ──
-  if (millis() - lastScanTime < SCAN_COOLDOWN_MS) return;
+  if (millis() - lastScanTime < SCAN_COOLDOWN_MS)
+    return;
 
   // ── Wait for RFID card ──
-  if (!rfid.PICC_IsNewCardPresent()) return;
-  if (!rfid.PICC_ReadCardSerial())   return;
+  if (!rfid.PICC_IsNewCardPresent())
+    return;
+  if (!rfid.PICC_ReadCardSerial())
+    return;
 
   // ── Read UID ──
   String uid = readRFID();
@@ -178,7 +164,8 @@ void loop() {
 String readRFID() {
   String uid = "";
   for (byte i = 0; i < rfid.uid.size; i++) {
-    if (rfid.uid.uidByte[i] < 0x10) uid += "0";
+    if (rfid.uid.uidByte[i] < 0x10)
+      uid += "0";
     uid += String(rfid.uid.uidByte[i], HEX);
   }
   uid.toUpperCase();
@@ -188,8 +175,10 @@ String readRFID() {
 // ═══════════════════════════════════════════════════════════════
 int countPersons() {
   // Fire ultrasonic pulse
-  digitalWrite(TRIG_PIN, LOW);  delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
   long duration = pulseIn(ECHO_PIN, HIGH, 30000); // 30ms timeout
@@ -202,7 +191,8 @@ int countPersons() {
     // Basic 1-person vs multi detection:
     // For real tailgating detection, use 2 sensors or IR beam
     // Here we use a simple heuristic: very short distance = extra person behind
-    if (distance < 40) return 2; // Someone too close = possible tailgating
+    if (distance < 40)
+      return 2; // Someone too close = possible tailgating
     return 1;
   }
   return 0;
@@ -225,10 +215,10 @@ void sendAttendance(String uid, int personCount) {
 
   // Build JSON payload
   StaticJsonDocument<256> doc;
-  doc["rfid"]         = uid;
+  doc["rfid"] = uid;
   doc["sensor_count"] = personCount;
-  doc["gate_id"]      = "main_gate";
-  
+  doc["gate_id"] = "main_gate";
+
   String payload;
   serializeJson(doc, payload);
 
@@ -244,13 +234,13 @@ void sendAttendance(String uid, int personCount) {
     // Parse response
     StaticJsonDocument<512> res;
     DeserializationError err = deserializeJson(res, response);
-    
+
     if (!err) {
       bool success = res["success"].as<bool>();
       String message = res["message"].as<String>();
-      String name    = res["student"]["name"].as<String>();
-      String action  = res["gate_action"].as<String>();
-      bool   alert   = res["security_alert"].as<bool>();
+      String name = res["student"]["name"].as<String>();
+      String action = res["gate_action"].as<String>();
+      bool alert = res["security_alert"].as<bool>();
 
       if (action == "allow") {
         lcdPrint("Access Granted", name.length() > 0 ? name : "Welcome!");
@@ -286,7 +276,7 @@ void sendAttendance(String uid, int personCount) {
 void activateBuzzer() {
   Serial.println("[BUZZER] ACTIVATED");
   digitalWrite(BUZZER_PIN, HIGH);
-  buzzerActive    = true;
+  buzzerActive = true;
   buzzerStartTime = millis();
 }
 
@@ -298,8 +288,10 @@ void ledStatus(bool success) {
     digitalWrite(LED_GREEN_PIN, LOW);
   } else {
     for (int i = 0; i < 3; i++) {
-      digitalWrite(LED_RED_PIN, HIGH); delay(150);
-      digitalWrite(LED_RED_PIN, LOW);  delay(150);
+      digitalWrite(LED_RED_PIN, HIGH);
+      delay(150);
+      digitalWrite(LED_RED_PIN, LOW);
+      delay(150);
     }
   }
 }
@@ -307,8 +299,10 @@ void ledStatus(bool success) {
 // ═══════════════════════════════════════════════════════════════
 void lcdPrint(String line1, String line2) {
   lcd.clear();
-  lcd.setCursor(0, 0); lcd.print(line1.substring(0, 16));
-  lcd.setCursor(0, 1); lcd.print(line2.substring(0, 16));
+  lcd.setCursor(0, 0);
+  lcd.print(line1.substring(0, 16));
+  lcd.setCursor(0, 1);
+  lcd.print(line2.substring(0, 16));
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -317,12 +311,13 @@ void reconnectWiFi() {
   lcdPrint("WiFi Lost!", "Reconnecting...");
   WiFi.disconnect();
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  
+
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500); attempts++;
+    delay(500);
+    attempts++;
   }
-  
+
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("[WiFi] Reconnected!");
     lcdPrint("WiFi Restored!", WiFi.localIP().toString());

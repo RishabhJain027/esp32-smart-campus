@@ -1,134 +1,120 @@
 'use client';
 import { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
-import { db, isFirebaseConfigured } from '@/lib/firebase';
-import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, BarChart, Bar, Cell } from 'recharts';
 
-const mockHealth = [
-    { time: '12:00', cpu: 42, heap: 180, rssi: -65 },
-    { time: '12:05', cpu: 45, heap: 175, rssi: -67 },
-    { time: '12:10', cpu: 38, heap: 182, rssi: -64 },
-    { time: '12:15', cpu: 55, heap: 168, rssi: -70 },
-    { time: '12:20', cpu: 40, heap: 178, rssi: -66 },
+const ZONES = [
+  { id: 'main_gate', name: 'Main Gate', icon: '🚪', status: 'online', temp: 28.5, humidity: 62, occupancy: 3, lastPing: '2s ago' },
+  { id: 'iot_lab', name: 'IoT Lab (302)', icon: '🔬', status: 'online', temp: 24.1, humidity: 55, occupancy: 12, lastPing: '1s ago' },
+  { id: 'library', name: 'Library', icon: '📚', status: 'online', temp: 23.8, humidity: 50, occupancy: 28, lastPing: '3s ago' },
+  { id: 'canteen', name: 'Canteen', icon: '🍜', status: 'online', temp: 30.2, humidity: 70, occupancy: 45, lastPing: '5s ago' },
+  { id: 'cs_lab', name: 'CS Lab (204)', icon: '💻', status: 'warning', temp: 26.3, humidity: 58, occupancy: 8, lastPing: '12s ago' },
+  { id: 'seminar_hall', name: 'Seminar Hall', icon: '🎤', status: 'offline', temp: null, humidity: null, occupancy: 0, lastPing: '5m ago' },
 ];
 
-export default function IOTCommandCenter() {
-    const [status, setStatus] = useState('Online');
-    const [logs, setLogs] = useState([
-        { time: '12:20:45', msg: 'HEARTBEAT [ESP32-01]: OK, Heap: 182KB, RSSI: -65dBm', type: 'info' },
-        { time: '12:20:42', msg: 'RFID_SCAN: Card [A7B45C] at GATE_MAIN', type: 'success' },
-        { time: '12:20:43', msg: 'AUTH_SUCCESS: Student [Rishabh Jain] - ACCESS_GRANTED', type: 'success' },
-    ]);
+export default function IoTMonitor() {
+  const [zones, setZones] = useState(ZONES);
+  const [selectedZone, setSelectedZone] = useState(null);
+  const [telemetryLogs] = useState([
+    { time: '10:03:12', zone: 'Main Gate', event: 'RFID Scan: UID A7B45C → Access Granted', type: 'success' },
+    { time: '10:03:08', zone: 'IoT Lab', event: 'DHT22 Sync: 24.1°C / 55% RH', type: 'info' },
+    { time: '10:02:55', zone: 'Main Gate', event: 'Ultrasonic: 2 persons detected → SECURITY ALERT', type: 'danger' },
+    { time: '10:02:41', zone: 'Library', event: 'PIR Motion: Active (28 occupants)', type: 'info' },
+    { time: '10:02:30', zone: 'CS Lab', event: 'WiFi Signal Weak → Attempting ESP-MESH Relay', type: 'warning' },
+  ]);
 
-    useEffect(() => {
-        if (isFirebaseConfigured) {
-            const q = query(collection(db, 'entry_logs'), orderBy('entry_time', 'desc'), limit(15));
-            return onSnapshot(q, (snap) => {
-                const data = snap.docs.map(doc => ({
-                    id: doc.id,
-                    time: doc.data().entry_time?.toDate().toLocaleTimeString(),
-                    msg: `${doc.data().verification_method} ${doc.data().security_alert ? 'ALERT' : 'Access'} @ ${doc.data().gate_id}`,
-                    type: doc.data().security_alert ? 'danger' : 'success'
-                }));
-                if (data.length > 0) setLogs(data);
-            });
-        }
-    }, []);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setZones(prev => prev.map(z => {
+        if (z.status === 'offline') return z;
+        return {
+          ...z,
+          temp: z.temp ? +(z.temp + (Math.random() - 0.5) * 0.4).toFixed(1) : null,
+          humidity: z.humidity ? Math.min(95, Math.max(30, z.humidity + Math.floor((Math.random() - 0.5) * 3))) : null,
+          occupancy: Math.max(0, z.occupancy + Math.floor((Math.random() - 0.5) * 3)),
+        };
+      }));
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
 
-    return (
-        <DashboardLayout title="IoT Command Center" breadcrumb="Systems / Live Monitor">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
+  const statusColor = (s) => s === 'online' ? '#10b981' : s === 'warning' ? '#f59e0b' : '#ef4444';
+  const statusBg = (s) => s === 'online' ? 'rgba(16,185,129,0.12)' : s === 'warning' ? 'rgba(245,158,11,0.12)' : 'rgba(239,68,68,0.12)';
+
+  return (
+    <DashboardLayout title="IoT Monitor" breadcrumb="Real-Time Telemetry">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.02em' }}>🌐 IoT Command Center</h1>
+          <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 4 }}>
+            Live ESP32 node telemetry · ESP-MESH network · Sensor fusion
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div className="wifi-dot" />
+          <span style={{ fontSize: 12, color: 'var(--color-green)', fontWeight: 600 }}>
+            {zones.filter(z => z.status === 'online').length}/{zones.length} Nodes Online
+          </span>
+        </div>
+      </div>
+
+      <div className="grid-3" style={{ marginBottom: 24 }}>
+        {zones.map(z => (
+          <div key={z.id} className="card" style={{
+            cursor: 'pointer',
+            borderColor: selectedZone === z.id ? 'var(--color-blue)' : undefined,
+            boxShadow: selectedZone === z.id ? 'var(--shadow-glow)' : undefined,
+          }} onClick={() => setSelectedZone(selectedZone === z.id ? null : z.id)}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 24 }}>{z.icon}</span>
                 <div>
-                    <h1 style={{ fontSize: 28, fontWeight: 900, background: 'linear-gradient(90deg, #fff, #94a3b8)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                        Hardware Pulse & Telemetry
-                    </h1>
-                    <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>Real-time monitoring of ESP32 DevModules & Peripheral Sensors</p>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{z.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Last ping: {z.lastPing}</div>
                 </div>
-                <div style={{ display: 'flex', gap: 12 }}>
-                    <div className="badge badge-success" style={{ padding: '8px 16px', fontSize: 13 }}>
-                        ● System Healthy
-                    </div>
-                    <button className="btn btn-outline btn-sm">Reboot Nodes</button>
-                </div>
+              </div>
+              <div style={{
+                padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+                background: statusBg(z.status), color: statusColor(z.status),
+                textTransform: 'uppercase', letterSpacing: '0.5px',
+              }}>{z.status}</div>
             </div>
+            {z.status !== 'offline' ? (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                {[
+                  { val: `${z.temp}°C`, label: 'TEMP', color: z.temp > 28 ? '#ef4444' : '#22d3ee' },
+                  { val: `${z.humidity}%`, label: 'HUMIDITY', color: '#38bdf8' },
+                  { val: z.occupancy, label: 'OCCUPANCY', color: z.occupancy > 30 ? '#f59e0b' : '#10b981' },
+                ].map((m, i) => (
+                  <div key={i} style={{ textAlign: 'center', padding: '10px 0', background: 'rgba(255,255,255,0.03)', borderRadius: 10 }}>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: m.color }}>{m.val}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{m.label}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 13 }}>
+                ⚠️ Node Offline — Check WiFi or ESP-MESH relay
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
 
-            <div className="grid-3" style={{ marginBottom: 24, gap: 20 }}>
-                {/* Device Card */}
-                <div className="card-glass" style={{ padding: 24 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-blue)' }}>Master Gate Node</span>
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>ID: ESP32-MA-01</span>
-                    </div>
-                    <div style={{ fontSize: 32, fontWeight: 800, marginBottom: 8 }}>-65 dBm</div>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--color-green)' }} />
-                        Strong WiFi Signal
-                    </div>
-                    <div className="progress-bar" style={{ marginTop: 20, height: 4 }}>
-                        <div className="progress-fill" style={{ width: '85%' }} />
-                    </div>
-                </div>
-
-                <div className="card-glass" style={{ padding: 24 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-purple)' }}>CPU Telemetry</span>
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>40% Load</span>
-                    </div>
-                    <div style={{ fontSize: 32, fontWeight: 800, marginBottom: 8 }}>42°C</div>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Thermal: Within Normal Limits</div>
-                    <div className="progress-bar" style={{ marginTop: 20, height: 4 }}>
-                        <div className="progress-fill" style={{ width: '42%', background: 'var(--grad-purple)' }} />
-                    </div>
-                </div>
-
-                <div className="card-glass" style={{ padding: 24 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-amber)' }}>Heap Memory</span>
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>182 KB Free</span>
-                    </div>
-                    <div style={{ fontSize: 32, fontWeight: 800, marginBottom: 8 }}>76%</div>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Stability: High Reliability</div>
-                    <div className="progress-bar" style={{ marginTop: 20, height: 4 }}>
-                        <div className="progress-fill" style={{ width: '76%', background: 'var(--grad-amber)' }} />
-                    </div>
-                </div>
+      <div className="card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 700 }}>📡 Live Telemetry Stream</h3>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>MQTT → WebSocket → UI</span>
+        </div>
+        <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+          {telemetryLogs.map((log, i) => (
+            <div key={i} style={{ display: 'flex', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', minWidth: 70 }}>{log.time}</span>
+              <span className={`badge badge-${log.type === 'success' ? 'success' : log.type === 'danger' ? 'danger' : log.type === 'warning' ? 'warning' : 'blue'}`}>{log.zone}</span>
+              <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{log.event}</span>
             </div>
-
-            <div className="grid-2" style={{ gap: 24 }}>
-                <div className="card">
-                    <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 24 }}>System Stability Data</h3>
-                    <ResponsiveContainer width="100%" height={280}>
-                        <AreaChart data={mockHealth}>
-                            <defs>
-                                <linearGradient id="colorCpu" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                                </linearGradient>
-                            </defs>
-                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                            <XAxis dataKey="time" tick={{ fill: '#64748b', fontSize: 12 }} />
-                            <YAxis tick={{ fill: '#64748b', fontSize: 12 }} />
-                            <Tooltip contentStyle={{ background: '#0a1628', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12 }} />
-                            <Area type="monotone" dataKey="cpu" stroke="#3b82f6" fillOpacity={1} fill="url(#colorCpu)" strokeWidth={3} />
-                        </AreaChart>
-                    </ResponsiveContainer>
-                </div>
-
-                <div className="card" style={{ padding: 0 }}>
-                    <div style={{ padding: 24 }}>
-                        <h3 style={{ fontSize: 18, fontWeight: 800 }}>Node Live Stream</h3>
-                    </div>
-                    <div style={{ height: 280, overflowY: 'auto', background: 'rgba(0,0,0,0.2)', padding: '0 24px 24px', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                        {logs.map((log, i) => (
-                            <div key={i} style={{ padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.03)', color: log.type === 'success' ? '#10b981' : log.type === 'danger' ? '#ef4444' : log.type === 'warning' ? '#f59e0b' : '#94a3b8' }}>
-                                <span style={{ opacity: 0.5, marginRight: 10 }}>[{log.time}]</span>
-                                {log.msg}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </div>
-        </DashboardLayout>
-    );
+          ))}
+        </div>
+      </div>
+    </DashboardLayout>
+  );
 }
