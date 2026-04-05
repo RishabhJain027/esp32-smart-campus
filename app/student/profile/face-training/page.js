@@ -8,6 +8,8 @@ export default function FaceTrainingPage() {
     const [trainingState, setTrainingState] = useState('idle'); // idle | loading | detecting | done | error
     const [trainedEmbedding, setTrainedEmbedding] = useState(null);
     const fileInputRef = useRef(null);
+    const imgRef = useRef(null);
+    const canvasRef = useRef(null);
 
     useEffect(() => {
         const authUser = localStorage.getItem('sc_user');
@@ -47,6 +49,15 @@ export default function FaceTrainingPage() {
                 setTrainingState('error');
                 alert("No face detected in this image. Please ensure your face is clearly visible and well-lit.");
                 return;
+            }
+
+            // Draw landmarks overlay
+            if (canvasRef.current && imgRef.current) {
+                const canvas = canvasRef.current;
+                fa.matchDimensions(canvas, imgRef.current);
+                const resizedDetections = fa.resizeResults(det, imgRef.current);
+                fa.draw.drawDetections(canvas, resizedDetections);
+                fa.draw.drawFaceLandmarks(canvas, resizedDetections);
             }
 
             setTrainedEmbedding(Array.from(det.descriptor));
@@ -113,7 +124,10 @@ export default function FaceTrainingPage() {
                         position: 'relative', marginBottom: 24
                 }}>
                     {imagePreview ? (
-                        <img src={imagePreview} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="PFP" />
+                        <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                            <img ref={imgRef} src={imagePreview} style={{ width: '100%', height: '100%', objectFit: 'contain' }} alt="PFP" />
+                            <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
+                        </div>
                     ) : (
                         <div style={{ textAlign: 'center', color: 'var(--color-cyan)', fontWeight: 600 }}>
                             <div style={{ fontSize: 24, marginBottom: 8 }}>+</div>

@@ -115,6 +115,13 @@ export default function FaceAttendancePage() {
                     setFaceFound(false);
                     setLiveBox(null);
                     setLiveResult(null);
+                    if (canvasRef.current && video) {
+                        const faLocal = faceApi.current;
+                        const canvas = canvasRef.current;
+                        faLocal.matchDimensions(canvas, video);
+                        const ctx = canvas.getContext('2d');
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    }
                     return;
                 }
 
@@ -128,6 +135,16 @@ export default function FaceAttendancePage() {
                     width: `${(width / vw) * 100}%`,
                     height: `${(height / vh) * 100}%`,
                 });
+
+                if (canvasRef.current) {
+                    const canvas = canvasRef.current;
+                    const faLocal = faceApi.current;
+                    faLocal.matchDimensions(canvas, video);
+                    const resizedDetections = faLocal.resizeResults(det, video);
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    faLocal.draw.drawFaceLandmarks(canvas, resizedDetections);
+                }
 
                 const descriptor = Array.from(det.descriptor);
 
@@ -227,7 +244,10 @@ export default function FaceAttendancePage() {
                                 width: '100%', height: '100%', objectFit: 'cover',
                                 display: 'block', transform: 'scaleX(-1)'
                             }} />
-                            <canvas ref={canvasRef} style={{ display: 'none' }} />
+                            <canvas ref={canvasRef} style={{ 
+                                position: 'absolute', inset: 0, width: '100%', height: '100%', 
+                                pointerEvents: 'none', transform: 'scaleX(-1)' 
+                            }} />
 
                             {/* Bounding box */}
                             {liveBox && (
