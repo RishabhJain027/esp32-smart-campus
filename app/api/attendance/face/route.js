@@ -67,14 +67,16 @@ export async function POST(req) {
             );
         }
 
-        // Log to Google Sheets
+        // Log to Google Sheets (Standardized [id, student_id, name, action, date, status, method, time])
         appendToSheet([
-            now.toISOString().split('T')[0],
-            timeStr,
-            student.roll_no || student.id,
+            `att_${Date.now()}`,
+            student.id,
             student.name,
-            'Face',
-            'Present'
+            'Lecture Attendance',
+            now.toISOString().split('T')[0],
+            'Present',
+            'Face (WebCam)',
+            new Date().toISOString()
         ]).catch(console.error);
 
         return NextResponse.json({
