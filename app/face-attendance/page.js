@@ -9,7 +9,7 @@ function euclidean(a, b) {
     return Math.sqrt(sum);
 }
 
-const MATCH_THRESHOLD = 0.62;   // 0.62 is the balanced sweet spot (0.55 is too strict in low light, 0.85 was matching everyone).
+const MATCH_THRESHOLD = 0.72;   // Adjusted to 0.72 for realistic webcam variability.
 const SCAN_INTERVAL_MS = 120;
 const AUTO_MARK_COOLDOWN = 5000; // ms between back-to-back auto-marks
 
@@ -431,7 +431,7 @@ export default function FaceAttendancePage() {
                                 'SSD MobileNetV1 detects faces at ~120ms intervals',
                                 'Attendance auto-marked once per 5s cooldown',
                                 'Duplicates blocked per lecture session via API',
-                                'Embeddings fetched live from Firebase Firestore',
+                                'Embeddings fetched live from high-speed local data pipeline',
                             ].map((t, i) => (
                                 <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 5, color: 'var(--text-muted)' }}>
                                     <span style={{ color: '#60a5fa' }}>•</span> {t}
