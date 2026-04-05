@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
+import BiometricsManager from '@/components/BiometricsManager';
 
 function LoginContent() {
     const router = useRouter();
@@ -215,6 +216,29 @@ function LoginContent() {
                             <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '13px' }} type="submit" disabled={loading}>
                                 {loading ? <><span className="spinner" /> Signing in...</> : `🚀 Sign In as ${role.charAt(0).toUpperCase() + role.slice(1)}`}
                             </button>
+                            
+                            <div style={{ position: 'relative', margin: '20px 0', textAlign: 'center' }}>
+                                <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, borderTop: '1px dashed var(--border)' }} />
+                                <span style={{ position: 'relative', background: 'var(--bg-card)', padding: '0 10px', fontSize: 12, color: 'var(--text-muted)' }}>OR</span>
+                            </div>
+
+                            <BiometricsManager 
+                                userId="last_user" // Simplified for demo purpose
+                                mode="authenticate" 
+                                buttonText="Sign In with OS Fingerprint"
+                                style={{ width: '100%', justifyContent: 'center', background: 'var(--bg-secondary)', padding: '12px', border: '1px solid var(--border)', borderRadius: '8px' }}
+                                onSuccess={() => {
+                                    const savedUserStr = localStorage.getItem('sc_user');
+                                    let navRole = 'student';
+                                    if (savedUserStr) {
+                                        const saved = JSON.parse(savedUserStr);
+                                        navRole = saved.role || 'student';
+                                    }
+                                    // Set demo biometric token
+                                    document.cookie = `sc_token=demo-biometric-token; path=/; max-age=86400; SameSite=Strict`;
+                                    router.push(`/${navRole}/dashboard`);
+                                }}
+                            />
                         </form>
                     )}
 
