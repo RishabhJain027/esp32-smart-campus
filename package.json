@@ -9,8 +9,8 @@
     "whatsapp": "node whatsapp-server.js"
   },
   "dependencies": {
-    "@next/swc-win32-x64-msvc": "^16.1.7",
     "bcryptjs": "^2.4.3",
+    "concurrently": "^9.2.1",
     "cookie": "^0.6.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
