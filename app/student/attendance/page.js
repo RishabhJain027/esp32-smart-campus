@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
+import BiometricsManager from '@/components/BiometricsManager';
 
 const MOCK_SUBJECTS = [
     { subject: 'Data Structures', code: 'CS301', present: 28, total: 32, percentage: 87.5 },
@@ -124,9 +125,21 @@ export default function StudentAttendance() {
                     <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 8 }}>
                         {overall >= 75 ? '✅ Eligible for exams' : '⚠️ Below 75% threshold — attendance required'}
                     </div>
-                    <a href="/face-attendance" className="btn btn-primary" style={{ marginTop: 20, width: '100%', justifyContent: 'center' }}>
-                        📷 Quick Face Check-In
-                    </a>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 20 }}>
+                        <a href="/face-attendance" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
+                            📷 Quick Face Check-In
+                        </a>
+                        {user && <BiometricsManager 
+                            userId={user.id} 
+                            mode="authenticate" 
+                            buttonText="Biometric Fingerprint Check-In" 
+                            style={{ width: '100%', justifyContent: 'center' }}
+                            onSuccess={(cred) => {
+                                alert("✅ Biometric Attendance successfully recorded via OS hardware!");
+                                // Here we would hit the server to mark attendance
+                            }}
+                        />}
+                    </div>
                 </div>
             </div>
 

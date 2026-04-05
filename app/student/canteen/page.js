@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
+import BiometricsManager from '@/components/BiometricsManager';
 
 const MENU_ITEMS = [
     { id: 1, name: 'Mumbai Vada Pav', price: 20, icon: '🍔', desc: 'Spicy potato fritter, garlic chutney, fried green chilli, soft pav', category: 'Mumbai Special' },
@@ -158,14 +159,27 @@ export default function StudentCanteen() {
                     </div>
 
                     {rfidStatus === 'idle' && (
-                        <button 
-                            onClick={simulateRfidPayment} 
-                            disabled={cart.length === 0}
-                            className={`btn ${cart.length > 0 ? 'btn-primary' : 'btn-outline'}`} 
-                            style={{ width: '100%', height: 48, fontSize: 14 }}
-                        >
-                            💳 Tap RFID Card to Pay
-                        </button>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            <button 
+                                onClick={simulateRfidPayment} 
+                                disabled={cart.length === 0}
+                                className={`btn ${cart.length > 0 ? 'btn-primary' : 'btn-outline'}`} 
+                                style={{ width: '100%', height: 48, fontSize: 14 }}
+                            >
+                                💳 Tap RFID Card to Pay
+                            </button>
+                            {user && <BiometricsManager 
+                                userId={user.id} 
+                                mode="authenticate" 
+                                buttonText="Pay with Fingerprint" 
+                                style={{ width: '100%', height: 48, fontSize: 14, justifyContent: 'center' }}
+                                onSuccess={(cred) => {
+                                    setRfidStatus('success');
+                                    setBalance(prev => prev - totalCost);
+                                    setTimeout(() => { setCart([]); setRfidStatus('idle'); }, 2000);
+                                }}
+                            />}
+                        </div>
                     )}
 
                     {rfidStatus === 'scanning' && (

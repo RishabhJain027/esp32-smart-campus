@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import BiometricsManager from '@/components/BiometricsManager';
 
 const attendanceData = [
     { month: 'Jan', rate: 85 },
@@ -12,7 +13,7 @@ const attendanceData = [
 ];
 
 export default function StudentProfile() {
-    const [user, setUser] = useState({ name: 'Rishabh Jain', roll: 'CS2021001', dept: 'Computer Science', year: '3rd Year' });
+    const [user, setUser] = useState({ id: 'student_001', name: 'Rishabh Jain', roll: 'CS2021001', dept: 'Computer Science', year: '3rd Year' });
 
     return (
         <DashboardLayout title="Student Profile" breadcrumb="Profile / Overview">
@@ -36,8 +37,9 @@ export default function StudentProfile() {
                             <div className="badge badge-success">Active</div>
                         </div>
                     </div>
-                    <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-                        <button className="btn btn-primary btn-sm" style={{ marginBottom: 10 }}>Edit Profile</button>
+                    <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 10, textAlign: 'right' }}>
+                        <button className="btn btn-primary btn-sm">Edit Profile</button>
+                        <BiometricsManager userId={user.id} userName={user.name} mode="register" />
                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Last Scan: Today, 10:45 AM</div>
                     </div>
                 </div>
