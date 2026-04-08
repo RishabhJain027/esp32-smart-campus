@@ -1,7 +1,16 @@
 import { NextResponse } from 'next/server';
-import { storage, db } from '@/lib/firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { doc, updateDoc } from 'firebase/firestore';
+import { localDB } from '@/lib/localDB';
+import fs from 'fs';
+import path from 'path';
+
+// Store profile photos in public/uploads/profiles/
+const UPLOADS_DIR = path.join(process.cwd(), 'public', 'uploads', 'profiles');
+
+function ensureUploadsDir() {
+    if (!fs.existsSync(UPLOADS_DIR)) {
+        fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    }
+}
 
 export async function POST(req) {
     try {
@@ -13,33 +22,46 @@ export async function POST(req) {
             return NextResponse.json({ error: 'Photo file and userId are required' }, { status: 400 });
         }
 
-        const buffer = await file.arrayBuffer();
-        const fileExt = file.name.split('.').pop() || 'jpg';
-        const fileName = `profiles/${userId}_${Date.now()}.${fileExt}`;
-        const storageRef = ref(storage, fileName);
+        // Validate it's an image
+        if (!file.type?.startsWith('image/')) {
+            return NextResponse.json({ error: 'Only image files are allowed' }, { status: 400 });
+        }
 
-        // Upload to Firebase Storage
-        const snapshot = await uploadBytes(storageRef, new Uint8Array(buffer), {
-            contentType: file.type || 'image/jpeg',
-        });
+        // Validate user exists
+        const user = localDB.getUserById(userId);
+        if (!user) {
+            return NextResponse.json({ error: 'User not found' }, { status: 404 });
+        }
 
-        // Get public URL
-        const downloadURL = await getDownloadURL(snapshot.ref);
+        ensureUploadsDir();
 
-        // Update user doc in Firestore
-        const userRef = doc(db, 'users', userId);
-        await updateDoc(userRef, {
-            profile_photo: downloadURL
-        });
+        // Save file to public/uploads/profiles/
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const ext = (file.name?.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const fileName = `${userId}_${Date.now()}.${ext}`;
+        const filePath = path.join(UPLOADS_DIR, fileName);
+        fs.writeFileSync(filePath, buffer);
 
-        return NextResponse.json({ 
-            success: true, 
-            message: 'Photo uploaded successfully',
-            url: downloadURL 
+        // Public URL (served by Next.js static assets)
+        const publicUrl = `/uploads/profiles/${fileName}`;
+
+        // Delete old photo if it exists and was stored locally
+        if (user.profile_photo && user.profile_photo.startsWith('/uploads/')) {
+            const oldPath = path.join(process.cwd(), 'public', user.profile_photo);
+            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        }
+
+        // Update user in DB
+        localDB.updateUser(userId, { profile_photo: publicUrl });
+
+        return NextResponse.json({
+            success: true,
+            message: 'Profile photo updated successfully',
+            url: publicUrl,
         });
 
     } catch (err) {
         console.error('Photo upload error:', err);
-        return NextResponse.json({ error: 'Failed to upload photo to Cloud Storage' }, { status: 500 });
+        return NextResponse.json({ error: 'Failed to upload photo: ' + err.message }, { status: 500 });
     }
 }

@@ -70,12 +70,8 @@ export default function Sidebar({ role = 'student', user = {} }) {
     return (
         <aside className="sidebar">
             {/* Brand */}
-            <div className="sidebar-brand">
-                <div className="sidebar-brand-icon">🏫</div>
-                <div className="sidebar-brand-text">
-                    <h2>SAKEC.AI</h2>
-                    <span>Autonomous Campus</span>
-                </div>
+            <div className="sidebar-brand" style={{ padding: '24px 20px' }}>
+                <img src="/psr-logo.png" alt="PSR Logo" style={{ height: 45, width: 'auto' }} />
             </div>
 
             {/* Navigation */}

@@ -160,6 +160,7 @@ export default function StudentCanteen() {
 
                     {rfidStatus === 'idle' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            {/* RFID Card */}
                             <button 
                                 onClick={simulateRfidPayment} 
                                 disabled={cart.length === 0}
@@ -168,34 +169,79 @@ export default function StudentCanteen() {
                             >
                                 💳 Tap RFID Card to Pay
                             </button>
+
+                            {/* ── Biometric divider ── */}
+                            {user && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0' }}>
+                                    <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                        🔐 BIOMETRIC PAY
+                                    </span>
+                                    <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                                </div>
+                            )}
+
+                            {/* ── Face Recognition ── */}
                             {user && <BiometricsManager 
                                 userId={user.id} 
                                 mode="authenticate" 
-                                buttonText="Pay with Face ID / Fingerprint" 
-                                style={{ width: '100%', height: 48, fontSize: 14, justifyContent: 'center' }}
+                                buttonText="Pay with Face Recognition" 
+                                style={{ width: '100%', height: 48, fontSize: 13, justifyContent: 'center', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.4)', borderRadius: 8, color: '#a78bfa' }}
                                 onSuccess={async (cred) => {
+                                    if (cart.length === 0) return;
                                     setRfidStatus('scanning');
-                                    // Hit the endpoint to deduct the actual DB balance
                                     const res = await fetch('/api/esp32/rfid', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
                                         body: JSON.stringify({
                                             hardware_id: 'Canteen_Terminal_1',
                                             student_id: user.id,
-                                            rfid_uid: user.rfid_uid || 'Biometric_Auth',
+                                            rfid_uid: user.rfid_uid || 'FaceAuth',
                                             action: 'canteen',
                                             amount: totalCost
                                         })
                                     });
                                     const data = await res.json();
-                                    
                                     if (data.success) {
                                         setRfidStatus('success');
                                         setBalance(prev => prev - totalCost);
                                         setTimeout(() => { setCart([]); setRfidStatus('idle'); }, 2000);
                                     } else {
                                         setRfidStatus('failed');
-                                        alert("Payment Error: " + (data.message || "Insufficient balance or invalid auth"));
+                                        alert("Payment Error: " + (data.message || "Insufficient balance"));
+                                        setTimeout(() => setRfidStatus('idle'), 2000);
+                                    }
+                                }}
+                            />}
+
+                            {/* ── Fingerprint ── */}
+                            {user && <BiometricsManager 
+                                userId={user.id} 
+                                mode="authenticate" 
+                                buttonText="Pay with Fingerprint" 
+                                style={{ width: '100%', height: 48, fontSize: 13, justifyContent: 'center', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.4)', borderRadius: 8, color: '#34d399' }}
+                                onSuccess={async (cred) => {
+                                    if (cart.length === 0) return;
+                                    setRfidStatus('scanning');
+                                    const res = await fetch('/api/esp32/rfid', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                            hardware_id: 'Canteen_Terminal_1',
+                                            student_id: user.id,
+                                            rfid_uid: user.rfid_uid || 'FingerprintAuth',
+                                            action: 'canteen',
+                                            amount: totalCost
+                                        })
+                                    });
+                                    const data = await res.json();
+                                    if (data.success) {
+                                        setRfidStatus('success');
+                                        setBalance(prev => prev - totalCost);
+                                        setTimeout(() => { setCart([]); setRfidStatus('idle'); }, 2000);
+                                    } else {
+                                        setRfidStatus('failed');
+                                        alert("Payment Error: " + (data.message || "Insufficient balance"));
                                         setTimeout(() => setRfidStatus('idle'), 2000);
                                     }
                                 }}
