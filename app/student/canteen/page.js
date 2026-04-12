@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import BiometricsManager from '@/components/BiometricsManager';
+import FacePayment from '@/components/FacePayment';
 
 const MENU_ITEMS = [
     { id: 1, name: 'Mumbai Vada Pav', price: 20, icon: '🍔', desc: 'Spicy potato fritter, garlic chutney, fried green chilli, soft pav', category: 'Mumbai Special' },
@@ -182,12 +183,13 @@ export default function StudentCanteen() {
                             )}
 
                             {/* ── Face Recognition ── */}
-                            {user && <BiometricsManager 
-                                userId={user.id} 
-                                mode="authenticate" 
+                            {user && <FacePayment 
+                                userId={user.id}
+                                userName={user.name}
                                 buttonText="Pay with Face Recognition" 
+                                disabled={cart.length === 0}
                                 style={{ width: '100%', height: 48, fontSize: 13, justifyContent: 'center', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.4)', borderRadius: 8, color: '#a78bfa' }}
-                                onSuccess={async (cred) => {
+                                onSuccess={async (matchData) => {
                                     if (cart.length === 0) return;
                                     setRfidStatus('scanning');
                                     const res = await fetch('/api/esp32/rfid', {
