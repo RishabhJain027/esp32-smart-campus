@@ -11,6 +11,17 @@ export async function POST(req) {
             return NextResponse.json({ error: 'Invalid face descriptor data' }, { status: 400 });
         }
 
+        // Update localDB for offline/local functionality
+        try {
+            const { localDB } = await import('@/lib/localDB');
+            localDB.updateUser(userId, {
+                face_embedding: faceDescriptor,
+                face_status: 'trained'
+            });
+        } catch (localErr) {
+            console.error('Local JSON update error:', localErr.message);
+        }
+
         // We use a mock admin handling if Firebase is down, but normally we update doc:
         try {
             const userRef = doc(db, 'users', userId);

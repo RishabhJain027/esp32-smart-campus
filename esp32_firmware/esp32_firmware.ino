@@ -207,7 +207,7 @@ void sendAttendance(String uid, int personCount) {
   }
 
   HTTPClient http;
-  String url = String(SERVER_BASE) + "/api/attendance/rfid";
+  String url = String(SERVER_BASE) + "/api/esp32/rfid";
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("x-api-key", API_KEY);
