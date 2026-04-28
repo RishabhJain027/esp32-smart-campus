@@ -1,27 +1,42 @@
 /*
  * ===================================================================
- *  PSR Smart Campus – ESP32 Firmware  (Updated: 2026-04-28)
+ *  PSR Smart Campus – ESP32 Firmware  v2.0  (Updated: 2026-04-28)
  * ===================================================================
- *  PIN MAP (matches physical wiring):
  *
- *  D2  → RELAY  (gate / door lock)
+ *  ── DUAL MODE OPERATION ──────────────────────────────────────────
+ *  Press D23 Switch to toggle between:
+ *    [GATE MODE]    → RFID scans log attendance + open relay
+ *    [CANTEEN MODE] → RFID scans deduct wallet payment
+ *
+ *  In CANTEEN mode, Potentiometer (D34) adjusts payment amount:
+ *    Pot raw 0–4095 maps to Rs.10 – Rs.500 (nearest Rs.10 step)
+ *
+ *  LCD shows current mode on idle screen.
+ *  LED Green  (D12) = Gate Mode active indicator (solid)
+ *  LED Yellow (D14) = Canteen Mode active indicator (solid)
+ *  LED Red    (D13) = Blinks on access denied / low balance
+ *
+ * ───────────────────────────────────────────────────────────────────
+ *  PIN MAP (matches physical wiring)
+ * ───────────────────────────────────────────────────────────────────
+ *  D2  → RELAY         (gate / door lock)
  *  D4  → BUZZER
- *  D5  → DHT11  (temperature & humidity)
- *  D12 → LED 1  (Green  – Access Granted)
- *  D13 → LED 2  (Red    – Access Denied)
- *  D14 → LED 3  (Yellow – Alert / Warning)
- *  D15 → RFID SS/CS  (HSPI)
- *  D18 → RFID SCK    (HSPI)
- *  D19 → RFID MISO   (HSPI)
- *  D21 → I2C SDA  (LCD 16×2)
- *  D22 → I2C SCL  (LCD 16×2)
- *  D23 → Switch / Digital Sensor
+ *  D5  → DHT11         (temperature & humidity)
+ *  D12 → LED Green     (Access Granted / Gate Mode)
+ *  D13 → LED Red       (Denied / Error)
+ *  D14 → LED Yellow    (Alert / Canteen Mode)
+ *  D15 → RFID SS/CS    (HSPI)
+ *  D18 → RFID SCK      (HSPI)
+ *  D19 → RFID MISO     (HSPI)
+ *  D21 → I2C SDA       (LCD 16×2)
+ *  D22 → I2C SCL       (LCD 16×2)
+ *  D23 → Switch        (MODE TOGGLE – press to switch Gate/Canteen)
  *  D25 → Ultrasonic TRIG
  *  D26 → Ultrasonic ECHO
- *  D27 → RFID RST
- *  D33 → RFID MOSI   (HSPI)
- *  D34 → Potentiometer (Analog Input)
- *  D35 → LDR          (Analog Input)
+ *  D27 → RFID RST      (HSPI)
+ *  D33 → RFID MOSI     (HSPI)
+ *  D34 → Potentiometer (sets canteen payment amount)
+ *  D35 → LDR           (Analog – light level)
  *
  *  RFID Cards registered:
  *    Piyush Bedekar  → 83F4EE28
@@ -55,9 +70,9 @@ const char *API_KEY     = "esp32_secret_2026";
 #define BUZZER_PIN      4
 #define DHT_PIN         5
 
-#define LED_GREEN_PIN  12   // LED 1 – Access Granted
-#define LED_RED_PIN    13   // LED 2 – Access Denied
-#define LED_ALERT_PIN  14   // LED 3 – Alert / Warning
+#define LED_GREEN_PIN  12   // Gate Mode / Access Granted
+#define LED_RED_PIN    13   // Access Denied / Error
+#define LED_ALERT_PIN  14   // Canteen Mode / Alert
 
 // RFID – HSPI (avoids conflict with D23 switch & D5 DHT)
 #define RFID_SS_PIN    15
@@ -70,7 +85,7 @@ const char *API_KEY     = "esp32_secret_2026";
 #define I2C_SDA_PIN    21
 #define I2C_SCL_PIN    22
 
-// Digital Sensor / Switch
+// Mode Toggle Switch
 #define SWITCH_PIN     23
 
 // Ultrasonic HC-SR04
@@ -78,16 +93,25 @@ const char *API_KEY     = "esp32_secret_2026";
 #define ECHO_PIN       26
 
 // Analog Inputs
-#define POT_PIN        34   // Potentiometer
-#define LDR_PIN        35   // LDR
+#define POT_PIN        34   // Potentiometer – canteen amount control
+#define LDR_PIN        35   // LDR – light level
 
-// ── THRESHOLDS ─────────────────────────────────────────────────────
+// ── THRESHOLDS / TIMING ────────────────────────────────────────────
 #define PERSON_DIST_CM       100
 #define MULTI_PERSON_THRESH  2
 #define BUZZER_DURATION_MS   3000
 #define RELAY_OPEN_MS        3000
 #define SCAN_COOLDOWN_MS     3000
-#define SENSOR_REPORT_MS    30000   // Send env sensors every 30 s
+#define SWITCH_DEBOUNCE_MS   400
+#define SENSOR_REPORT_MS    30000  // env data every 30 s
+
+// Canteen amount: pot 0–4095 → Rs.10–Rs.500 in steps of Rs.10
+#define CANTEEN_AMOUNT_MIN   10
+#define CANTEEN_AMOUNT_MAX   500
+#define CANTEEN_AMOUNT_STEP  10
+
+// ── MODE ENUM ─────────────────────────────────────────────────────
+enum Mode { GATE_MODE, CANTEEN_MODE };
 
 // ── OBJECTS ────────────────────────────────────────────────────────
 SPIClass hspi(HSPI);
@@ -96,30 +120,35 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 DHT dht(DHT_PIN, DHT11);
 
 // ── STATE ──────────────────────────────────────────────────────────
-unsigned long lastScanTime     = 0;
-unsigned long buzzerStartTime  = 0;
-unsigned long relayOpenTime    = 0;
-unsigned long lastSensorReport = 0;
-bool buzzerActive  = false;
-bool relayOpen     = false;
+Mode         currentMode      = GATE_MODE;
+unsigned long lastScanTime    = 0;
+unsigned long buzzerStartTime = 0;
+unsigned long relayOpenTime   = 0;
+unsigned long lastSensorReport= 0;
+unsigned long lastSwitchPress = 0;
+bool         buzzerActive     = false;
+bool         relayOpen        = false;
 
-// ── FUNCTION PROTOTYPES ────────────────────────────────────────────
-String   readRFID();
-int      countPersons();
-bool     sendRFID(String uid, String gate_id);
-void     sendSensorData();
-void     activateBuzzer(int durationMs = BUZZER_DURATION_MS);
-void     openRelay(int durationMs = RELAY_OPEN_MS);
-void     ledGrant();
-void     ledDeny();
-void     ledAlert();
-void     lcdPrint(String l1, String l2 = "");
-void     reconnectWiFi();
+// ── FUNCTION PROTOTYPES ───────────────────────────────────────────
+String  readRFID();
+int     countPersons();
+bool    sendRFID(String uid, String gate_id, Mode mode, int amount);
+void    sendSensorData();
+void    activateBuzzer(int durationMs = BUZZER_DURATION_MS);
+void    openRelay(int durationMs = RELAY_OPEN_MS);
+void    ledGrant();
+void    ledDeny();
+void    ledAlert();
+void    setModeIndicator(Mode m);
+void    showIdleScreen();
+void    lcdPrint(String l1, String l2 = "");
+void    reconnectWiFi();
+int     getCanteenAmount();
 
 // ═══════════════════════════════════════════════════════════════════
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n[BOOT] PSR Smart Campus ESP32 starting...");
+  Serial.println("\n[BOOT] PSR Smart Campus ESP32 v2.0 (Dual-Mode)");
 
   // ── Output pins ──
   pinMode(RELAY_PIN,     OUTPUT);
@@ -144,7 +173,7 @@ void setup() {
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   lcd.init();
   lcd.backlight();
-  lcdPrint("PSR Campus", "Booting...");
+  lcdPrint("PSR Campus v2", "Booting...");
 
   // ── DHT11 ──
   dht.begin();
@@ -174,15 +203,18 @@ void setup() {
   delay(2000);
 
   // ── Startup LED test ──
-  digitalWrite(LED_GREEN_PIN, HIGH); delay(300);
+  digitalWrite(LED_GREEN_PIN, HIGH); delay(200);
+  digitalWrite(LED_RED_PIN,   HIGH); delay(200);
+  digitalWrite(LED_ALERT_PIN, HIGH); delay(200);
   digitalWrite(LED_GREEN_PIN, LOW);
-  digitalWrite(LED_RED_PIN,   HIGH); delay(300);
   digitalWrite(LED_RED_PIN,   LOW);
-  digitalWrite(LED_ALERT_PIN, HIGH); delay(300);
   digitalWrite(LED_ALERT_PIN, LOW);
 
-  lcdPrint("Scan RFID Card", "Ready...");
-  Serial.println("[BOOT] Setup complete. Awaiting RFID...");
+  // Start in GATE mode
+  currentMode = GATE_MODE;
+  setModeIndicator(GATE_MODE);
+  showIdleScreen();
+  Serial.println("[BOOT] Setup complete. Mode: GATE");
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -201,6 +233,8 @@ void loop() {
     digitalWrite(RELAY_PIN, LOW);
     relayOpen = false;
     lcdPrint("Gate Closed", "Scan Card");
+    delay(1000);
+    showIdleScreen();
     Serial.println("[RELAY] Gate closed");
   }
 
@@ -210,22 +244,27 @@ void loop() {
     return;
   }
 
-  // ── Periodic env sensor report ──
+  // ── Periodic env sensor report (every 30 s) ──
   if (now - lastSensorReport >= SENSOR_REPORT_MS) {
     sendSensorData();
     lastSensorReport = now;
   }
 
-  // ── Switch / Digital Sensor check ──
-  if (digitalRead(SWITCH_PIN) == LOW) {
-    Serial.println("[SWITCH] Pressed!");
-    // Can be used for manual gate override or alarm reset
-    if (buzzerActive) {
-      digitalWrite(BUZZER_PIN, LOW);
-      buzzerActive = false;
-      Serial.println("[SWITCH] Buzzer manually silenced");
+  // ── MODE TOGGLE via D23 Switch ─────────────────────────────────
+  if (digitalRead(SWITCH_PIN) == LOW && (now - lastSwitchPress > SWITCH_DEBOUNCE_MS)) {
+    lastSwitchPress = now;
+
+    if (currentMode == GATE_MODE) {
+      currentMode = CANTEEN_MODE;
+      Serial.println("[MODE] Switched → CANTEEN");
+    } else {
+      currentMode = GATE_MODE;
+      Serial.println("[MODE] Switched → GATE");
     }
-    delay(200); // debounce
+
+    setModeIndicator(currentMode);
+    showIdleScreen();
+    delay(200); // extra debounce
   }
 
   // ── Scan cooldown ──
@@ -236,37 +275,59 @@ void loop() {
   if (!rfid.PICC_ReadCardSerial())   return;
 
   String uid = readRFID();
-  Serial.printf("[RFID] Card: %s\n", uid.c_str());
+  Serial.printf("[RFID] Card: %s | Mode: %s\n", uid.c_str(),
+                currentMode == GATE_MODE ? "GATE" : "CANTEEN");
   lastScanTime = now;
 
-  lcdPrint("Card: " + uid, "Checking...");
+  // ── Get canteen amount from potentiometer ──
+  int amount = getCanteenAmount();
 
-  // ── Person count via ultrasonic ──
-  int persons = countPersons();
-  Serial.printf("[ULTRA] Persons detected: %d\n", persons);
+  if (currentMode == GATE_MODE) {
+    lcdPrint("Card: " + uid, "Checking Gate..");
 
-  if (persons >= MULTI_PERSON_THRESH) {
-    lcdPrint("SECURITY ALERT!", "Multi-Person!");
-    ledAlert();
-    activateBuzzer();
-    Serial.println("[SECURITY] Tailgate alert!");
-  }
+    // Person count via ultrasonic (only in gate mode)
+    int persons = countPersons();
+    Serial.printf("[ULTRA] Persons: %d\n", persons);
+    if (persons >= MULTI_PERSON_THRESH) {
+      lcdPrint("SECURITY ALERT!", "Multi-Person!");
+      ledAlert();
+      activateBuzzer();
+      Serial.println("[SECURITY] Tailgate alert!");
+    }
 
-  // ── Send to server ──
-  bool granted = sendRFID(uid, "main_gate");
+    bool granted = sendRFID(uid, "main_gate", GATE_MODE, 0);
+    if (granted) {
+      openRelay();
+      ledGrant();
+      Serial.println("[GATE] Access granted – relay opened");
+    } else {
+      ledDeny();
+      Serial.println("[GATE] Access denied");
+    }
 
-  if (granted) {
-    openRelay();
-    ledGrant();
-    Serial.println("[GATE] Access granted – relay opened");
-  } else {
-    ledDeny();
-    Serial.println("[GATE] Access denied");
+  } else { // CANTEEN_MODE
+    lcdPrint("Card: " + uid, "Paying Rs." + String(amount));
+    Serial.printf("[CANTEEN] Charging Rs.%d\n", amount);
+
+    bool paid = sendRFID(uid, "canteen_counter", CANTEEN_MODE, amount);
+    if (paid) {
+      // Short green flash for successful payment
+      activateBuzzer(500);  // short beep
+      ledGrant();
+      Serial.printf("[CANTEEN] Payment Rs.%d successful\n", amount);
+    } else {
+      ledDeny();
+      Serial.println("[CANTEEN] Payment failed");
+    }
   }
 
   // ── Stop RFID ──
   rfid.PICC_HaltA();
   rfid.PCD_StopCrypto1();
+
+  // Return to idle after 2.5s
+  delay(2500);
+  showIdleScreen();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -283,6 +344,18 @@ String readRFID() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  Potentiometer → canteen amount (Rs.10 – Rs.500, step Rs.10)
+// ═══════════════════════════════════════════════════════════════════
+int getCanteenAmount() {
+  int raw = analogRead(POT_PIN);  // 0–4095
+  // Map to CANTEEN_AMOUNT_MIN..MAX then round to nearest step
+  int mapped = map(raw, 0, 4095, CANTEEN_AMOUNT_MIN, CANTEEN_AMOUNT_MAX);
+  int stepped = (mapped / CANTEEN_AMOUNT_STEP) * CANTEEN_AMOUNT_STEP;
+  if (stepped < CANTEEN_AMOUNT_MIN) stepped = CANTEEN_AMOUNT_MIN;
+  return stepped;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  Ultrasonic HC-SR04 – returns approx person count
 // ═══════════════════════════════════════════════════════════════════
 int countPersons() {
@@ -292,7 +365,7 @@ int countPersons() {
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
-  long dur = pulseIn(ECHO_PIN, HIGH, 30000);
+  long dur  = pulseIn(ECHO_PIN, HIGH, 30000);
   float dist = (dur * 0.0343f) / 2.0f;
   Serial.printf("[ULTRA] Distance: %.1f cm\n", dist);
 
@@ -303,12 +376,11 @@ int countPersons() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  POST RFID scan → /api/esp32/rfid
-//  Sends: { rfid_uid, action, hardware_id }
-//  Reads: { success, lcd_line1, lcd_line2 }
-//  Piyush: 83F4EE28  |  Shravani: 23AED713
+//  POST to /api/esp32/rfid  (supports gate AND canteen)
+//  Gate:    { rfid_uid, action:"gate",    hardware_id }
+//  Canteen: { rfid_uid, action:"canteen", hardware_id, amount }
 // ═══════════════════════════════════════════════════════════════════
-bool sendRFID(String uid, String gate_id) {
+bool sendRFID(String uid, String gate_id, Mode mode, int amount) {
   if (WiFi.status() != WL_CONNECTED) {
     lcdPrint("No WiFi!", "Offline");
     return false;
@@ -322,16 +394,17 @@ bool sendRFID(String uid, String gate_id) {
   http.setTimeout(8000);
 
   StaticJsonDocument<256> doc;
-  doc["rfid_uid"]    = uid;        // e.g. "83F4EE28"
-  doc["action"]      = "gate";
+  doc["rfid_uid"]    = uid;
+  doc["action"]      = (mode == GATE_MODE) ? "gate" : "canteen";
   doc["hardware_id"] = gate_id;
+  if (mode == CANTEEN_MODE) doc["amount"] = amount;
 
   String payload;
   serializeJson(doc, payload);
 
   Serial.printf("[HTTP] POST %s → %s\n", url.c_str(), payload.c_str());
   int code = http.POST(payload);
-  bool granted = false;
+  bool success = false;
 
   if (code == 200 || code == 201) {
     String resp = http.getString();
@@ -339,16 +412,16 @@ bool sendRFID(String uid, String gate_id) {
 
     StaticJsonDocument<512> res;
     if (!deserializeJson(res, resp)) {
-      granted = res["success"].as<bool>();
-      String l1 = res["lcd_line1"] | (granted ? "ACCESS GRANTED" : "ACCESS DENIED");
+      success = res["success"].as<bool>();
+      String l1 = res["lcd_line1"] | (success ? "SUCCESS" : "FAILED");
       String l2 = res["lcd_line2"] | "";
       lcdPrint(l1, l2);
-      delay(2000);
+      delay(2500);
     }
   } else if (code == 404) {
     Serial.println("[HTTP] Unknown card");
     lcdPrint("UNKNOWN CARD", "Not Registered");
-    delay(2000);
+    delay(2500);
   } else {
     Serial.printf("[HTTP] Error: %d\n", code);
     lcdPrint("Server Error", String(code));
@@ -356,12 +429,11 @@ bool sendRFID(String uid, String gate_id) {
   }
 
   http.end();
-  lcdPrint("Scan RFID Card", "Ready...");
-  return granted;
+  return success;
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  POST env sensor data → /api/esp32/sensors
+//  POST env sensor data → /api/esp32/sensors  (every 30 s)
 //  DHT11 (temp + humidity), LDR (light), Potentiometer
 // ═══════════════════════════════════════════════════════════════════
 void sendSensorData() {
@@ -372,7 +444,7 @@ void sendSensorData() {
 
   Serial.printf("[DHT]  Temp: %.1f°C  Humid: %.1f%%\n", temp, humid);
   Serial.printf("[LDR]  Raw: %d\n", ldr);
-  Serial.printf("[POT]  Raw: %d\n", pot);
+  Serial.printf("[POT]  Raw: %d  →  Canteen Rs.%d\n", pot, getCanteenAmount());
 
   if (isnan(temp) || isnan(humid)) {
     Serial.println("[DHT] Read failed – skipping HTTP");
@@ -398,7 +470,7 @@ void sendSensorData() {
   String payload;
   serializeJson(doc, payload);
 
-  Serial.printf("[HTTP] POST %s (sensors)\n", url.c_str());
+  Serial.printf("[HTTP] POST sensors\n");
   int code = http.POST(payload);
   Serial.printf("[HTTP] Sensors response: %d\n", code);
   http.end();
@@ -408,10 +480,17 @@ void sendSensorData() {
 //  Actuators
 // ═══════════════════════════════════════════════════════════════════
 void activateBuzzer(int durationMs) {
-  Serial.println("[BUZZER] ON");
+  Serial.printf("[BUZZER] ON (%d ms)\n", durationMs);
   digitalWrite(BUZZER_PIN, HIGH);
-  buzzerActive     = true;
-  buzzerStartTime  = millis();
+  buzzerActive    = true;
+  buzzerStartTime = millis();
+  // Override duration in state so auto-off works correctly
+  // We repurpose BUZZER_DURATION_MS as constant; use direct delay for short beeps
+  if (durationMs != BUZZER_DURATION_MS) {
+    delay(durationMs);
+    digitalWrite(BUZZER_PIN, LOW);
+    buzzerActive = false;
+  }
 }
 
 void openRelay(int durationMs) {
@@ -423,14 +502,14 @@ void openRelay(int durationMs) {
 
 // ─── LED helpers ───────────────────────────────────────────────────
 void ledGrant() {
-  // Green ON for 1.5 s (non-blocking handled by state or just blocking here)
   digitalWrite(LED_GREEN_PIN, HIGH);
   delay(1500);
   digitalWrite(LED_GREEN_PIN, LOW);
+  // Restore mode indicator after
+  setModeIndicator(currentMode);
 }
 
 void ledDeny() {
-  // Red blink 3×
   for (int i = 0; i < 3; i++) {
     digitalWrite(LED_RED_PIN, HIGH); delay(150);
     digitalWrite(LED_RED_PIN, LOW);  delay(150);
@@ -438,10 +517,29 @@ void ledDeny() {
 }
 
 void ledAlert() {
-  // Yellow/Alert blink 5×
   for (int i = 0; i < 5; i++) {
     digitalWrite(LED_ALERT_PIN, HIGH); delay(100);
     digitalWrite(LED_ALERT_PIN, LOW);  delay(100);
+  }
+  setModeIndicator(currentMode); // restore
+}
+
+// ── Mode LED indicator ─────────────────────────────────────────────
+void setModeIndicator(Mode m) {
+  // Gate mode  → Green LED solid
+  // Canteen mode → Yellow LED solid
+  digitalWrite(LED_GREEN_PIN, m == GATE_MODE    ? HIGH : LOW);
+  digitalWrite(LED_ALERT_PIN, m == CANTEEN_MODE ? HIGH : LOW);
+  digitalWrite(LED_RED_PIN,   LOW);
+}
+
+// ── Idle screen on LCD ─────────────────────────────────────────────
+void showIdleScreen() {
+  if (currentMode == GATE_MODE) {
+    lcdPrint("[ GATE MODE ]", "Scan RFID Card");
+  } else {
+    int amt = getCanteenAmount();
+    lcdPrint("[CANTEEN MODE]", "Rs." + String(amt) + " - Scan");
   }
 }
 
@@ -472,64 +570,79 @@ void reconnectWiFi() {
     Serial.println("[WiFi] Reconnected!");
     lcdPrint("WiFi Restored!", WiFi.localIP().toString());
     delay(1000);
-    lcdPrint("Scan RFID Card", "Ready...");
+    showIdleScreen();
   }
 }
 
 /*
  * ===================================================================
- *  WIRING REFERENCE  (matches users actual breadboard)
+ *  DUAL MODE OPERATION GUIDE
  * ===================================================================
  *
- *  MFRC522 RFID (HSPI – avoids D23/D5 conflicts):
- *  ┌──────────┬───────────┐
- *  │ RFID     │ ESP32     │
- *  ├──────────┼───────────┤
- *  │ SDA/CS   │ D15       │
- *  │ SCK      │ D18       │
- *  │ MOSI     │ D33       │
- *  │ MISO     │ D19       │
- *  │ RST      │ D27       │
- *  │ GND      │ GND       │
- *  │ 3.3V     │ 3.3V      │
- *  └──────────┴───────────┘
+ *  GATE MODE  (default at boot)
+ *  ─────────────────────────────
+ *  LCD shows:  "[ GATE MODE ]"
+ *              "Scan RFID Card"
+ *  LED Green = solid ON
  *
- *  DHT11:  DATA → D5  | VCC → 3.3V | GND → GND
+ *  Scan Piyush / Shravani card:
+ *    → Backend checks user, logs attendance
+ *    → Relay (D2) opens gate for 3 s
+ *    → Green LED flashes
+ *    → LCD: "ACCESS GRANTED / Piyush Bedekar"
  *
- *  Ultrasonic HC-SR04:
- *  TRIG → D25 | ECHO → D26 | VCC → 5V | GND → GND
+ *  Unknown card:
+ *    → Red LED blinks 3×
+ *    → LCD: "UNKNOWN CARD / Not Registered"
  *
- *  LCD I2C 16x2:
- *  SDA → D21 | SCL → D22 | VCC → 5V | GND → GND
+ *  Multiple persons at gate:
+ *    → Yellow LED blinks 5× + Buzzer 3 s
+ *    → LCD: "SECURITY ALERT! / Multi-Person!"
  *
- *  RELAY:      IN → D2  | VCC → 5V | GND → GND
- *  BUZZER:     (+) → D4 | (-) → GND
- *  LED Green:  (+) → D12 → 220Ω → GND
- *  LED Red:    (+) → D13 → 220Ω → GND
- *  LED Yellow: (+) → D14 → 220Ω → GND
- *  Switch:     One leg → D23 | Other → GND  (INPUT_PULLUP)
- *  Pot:        Wiper → D34 | VCC → 3.3V | GND → GND
- *  LDR:        Divider out → D35 | VCC → 3.3V | GND → GND
+ * ─────────────────────────────────────────────────────────────────
+ *  CANTEEN MODE  (press D23 to toggle)
+ *  ─────────────────────────────────────
+ *  LCD shows:  "[CANTEEN MODE]"
+ *              "Rs.50 - Scan"
+ *  LED Yellow = solid ON
  *
- * ===================================================================
- *  REGISTERED RFID CARDS
- * ===================================================================
- *  Piyush Bedekar  UID: 83F4EE28   (stored: "83 F4 EE 28")
- *  Shravani Naik   UID: 23AED713   (stored: "23 AE D7 13")
+ *  Potentiometer (D34) sets payment amount:
+ *    Turn fully left  → Rs.10
+ *    Turn middle      → Rs.250
+ *    Turn fully right → Rs.500
+ *    (steps of Rs.10)
  *
- * ===================================================================
- *  LIBRARIES (Arduino IDE Library Manager)
- * ===================================================================
- *  - MFRC522          (miguelbalboa)
- *  - ArduinoJson      (Benoit Blanchon)
- *  - LiquidCrystal_I2C (Frank de Brabander)
- *  - DHT sensor library (Adafruit)
- *  - Adafruit Unified Sensor (dependency)
- * ===================================================================
+ *  Scan Piyush / Shravani card:
+ *    → Backend deducts amount from wallet
+ *    → Short beep (500 ms)
+ *    → Green LED flashes
+ *    → LCD: "PAID Rs.50 / BAL Rs.5950"
+ *
+ *  Insufficient balance:
+ *    → Red LED blinks 3×
+ *    → LCD: "TXN FAILED / Low Balance"
+ *
+ * ─────────────────────────────────────────────────────────────────
+ *  Toggle:  Press D23 switch anytime to switch between modes.
+ *           Mode saves until next press or power cycle.
+ *
+ * ═══════════════════════════════════════════════════════════════════
+ *  RFID WIRING (HSPI)
+ * ═══════════════════════════════════════════════════════════════════
+ *  SDA/CS → D15 | SCK → D18 | MOSI → D33
+ *  MISO   → D19 | RST → D27 | 3.3V | GND
+ *
+ *  REGISTERED CARDS
+ *  Piyush Bedekar  → 83F4EE28  (stored "83 F4 EE 28")
+ *  Shravani Naik   → 23AED713  (stored "23 AE D7 13")
+ *
+ * ═══════════════════════════════════════════════════════════════════
+ *  LIBRARIES (Arduino IDE)
+ * ═══════════════════════════════════════════════════════════════════
+ *  MFRC522 | ArduinoJson | LiquidCrystal_I2C
+ *  DHT sensor library (Adafruit) | Adafruit Unified Sensor
+ *
  *  UPLOAD SETTINGS
- * ===================================================================
- *  Board  : ESP32 Dev Module
- *  Port   : COMx
- *  Baud   : 115200
- * ===================================================================
+ *  Board: ESP32 Dev Module | Baud: 115200
+ * ═══════════════════════════════════════════════════════════════════
  */
