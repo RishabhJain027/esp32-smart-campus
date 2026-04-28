@@ -1,15 +1,24 @@
 /*
  * ===================================================================
- *  PSR Smart Campus – ESP32 Firmware  v2.0  (Updated: 2026-04-28)
+ *  PSR Smart Campus – ESP32 Firmware  v3.0  (Updated: 2026-04-28)
  * ===================================================================
  *
  *  ── DUAL MODE OPERATION ──────────────────────────────────────────
  *  Press D23 Switch to toggle between:
- *    [GATE MODE]    → RFID scans log attendance + open relay
+ *    [GATE MODE]    → RFID scans log attendance + Servo opens gate
  *    [CANTEEN MODE] → RFID scans deduct wallet payment
  *
  *  In CANTEEN mode, Potentiometer (D34) adjusts payment amount:
  *    Pot raw 0–4095 maps to Rs.10 – Rs.500 (nearest Rs.10 step)
+ *
+ *  ── SERVO MOTOR (D32) ────────────────────────────────────────────
+ *  Opens gate bar to 90° on RFID grant. Auto-closes to 0° after
+ *  3 seconds. Works alongside RELAY (D2) — both activate together.
+ *
+ *  ── IR SENSOR (D16) ──────────────────────────────────────────────
+ *  Detects person without RFID card. LOW = object detected.
+ *  Auto-opens gate (servo + relay) and logs AUTO_ENTRY to server.
+ *  3 s cooldown between IR triggers.
  *
  *  LCD shows current mode on idle screen.
  *  LED Green  (D12) = Gate Mode active indicator (solid)
@@ -26,14 +35,16 @@
  *  D13 → LED Red       (Denied / Error)
  *  D14 → LED Yellow    (Alert / Canteen Mode)
  *  D15 → RFID SS/CS    (HSPI)
+ *  D16 → IR SENSOR     (LOW = person detected → auto open gate)
  *  D18 → RFID SCK      (HSPI)
  *  D19 → RFID MISO     (HSPI)
  *  D21 → I2C SDA       (LCD 16×2)
  *  D22 → I2C SCL       (LCD 16×2)
- *  D23 → Switch        (MODE TOGGLE – press to switch Gate/Canteen)
+ *  D23 → Switch        (MODE TOGGLE – Gate / Canteen)
  *  D25 → Ultrasonic TRIG
  *  D26 → Ultrasonic ECHO
  *  D27 → RFID RST      (HSPI)
+ *  D32 → SERVO MOTOR   (PWM – gate bar 0°=closed, 90°=open)
  *  D33 → RFID MOSI     (HSPI)
  *  D34 → Potentiometer (sets canteen payment amount)
  *  D35 → LDR           (Analog – light level)
@@ -44,12 +55,13 @@
  *
  *  Libraries required:
  *    MFRC522, ArduinoJson, LiquidCrystal_I2C,
- *    DHT sensor library (Adafruit)
+ *    DHT sensor library (Adafruit), ESP32Servo
  * ===================================================================
  */
 
 #include <ArduinoJson.h>
 #include <DHT.h>
+#include <ESP32Servo.h>       // Servo motor support
 #include <HTTPClient.h>
 #include <LiquidCrystal_I2C.h>
 #include <MFRC522.h>
@@ -92,6 +104,15 @@ const char *API_KEY     = "esp32_secret_2026";
 #define TRIG_PIN       25
 #define ECHO_PIN       26
 
+// Servo Motor – gate bar
+#define SERVO_PIN      32   // PWM-capable pin
+#define SERVO_CLOSED    0   // degrees – gate closed
+#define SERVO_OPEN     90   // degrees – gate open
+
+// IR Sensor (FC-51 / TCRT5000)
+#define IR_PIN         16   // LOW = object/person detected
+#define IR_COOLDOWN_MS 3000 // min gap between IR triggers
+
 // Analog Inputs
 #define POT_PIN        34   // Potentiometer – canteen amount control
 #define LDR_PIN        35   // LDR – light level
@@ -118,16 +139,19 @@ SPIClass hspi(HSPI);
 MFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 DHT dht(DHT_PIN, DHT11);
+Servo gateServo;              // Servo motor on D32
 
 // ── STATE ──────────────────────────────────────────────────────────
-Mode         currentMode      = GATE_MODE;
-unsigned long lastScanTime    = 0;
-unsigned long buzzerStartTime = 0;
-unsigned long relayOpenTime   = 0;
-unsigned long lastSensorReport= 0;
-unsigned long lastSwitchPress = 0;
-bool         buzzerActive     = false;
-bool         relayOpen        = false;
+Mode          currentMode      = GATE_MODE;
+unsigned long lastScanTime     = 0;
+unsigned long buzzerStartTime  = 0;
+unsigned long relayOpenTime    = 0;
+unsigned long lastSensorReport = 0;
+unsigned long lastSwitchPress  = 0;
+unsigned long lastIRTrigger    = 0;  // IR cooldown
+bool          buzzerActive     = false;
+bool          relayOpen        = false;
+bool          gateOpen         = false; // tracks servo state
 
 // ── FUNCTION PROTOTYPES ───────────────────────────────────────────
 String  readRFID();
@@ -136,6 +160,9 @@ bool    sendRFID(String uid, String gate_id, Mode mode, int amount);
 void    sendSensorData();
 void    activateBuzzer(int durationMs = BUZZER_DURATION_MS);
 void    openRelay(int durationMs = RELAY_OPEN_MS);
+void    openGate();           // servo + relay together
+void    closeGate();          // servo close
+void    sendIREntry();        // auto-log IR detection to server
 void    ledGrant();
 void    ledDeny();
 void    ledAlert();
@@ -148,7 +175,7 @@ int     getCanteenAmount();
 // ═══════════════════════════════════════════════════════════════════
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n[BOOT] PSR Smart Campus ESP32 v2.0 (Dual-Mode)");
+  Serial.println("\n[BOOT] PSR Smart Campus ESP32 v3.0 (Servo + IR + Dual-Mode)");
 
   // ── Output pins ──
   pinMode(RELAY_PIN,     OUTPUT);
@@ -167,13 +194,19 @@ void setup() {
   pinMode(SWITCH_PIN, INPUT_PULLUP);
   pinMode(TRIG_PIN,   OUTPUT);
   pinMode(ECHO_PIN,   INPUT);
+  pinMode(IR_PIN,     INPUT_PULLUP); // IR: LOW = object detected
   // D34, D35 are input-only, no pinMode needed
+
+  // ── Servo Motor ──
+  gateServo.attach(SERVO_PIN);     // D32
+  gateServo.write(SERVO_CLOSED);   // start closed (0°)
+  Serial.println("[SERVO] Attached on D32 – closed at 0°");
 
   // ── LCD ──
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   lcd.init();
   lcd.backlight();
-  lcdPrint("PSR Campus v2", "Booting...");
+  lcdPrint("PSR Campus v3", "Booting...");
 
   // ── DHT11 ──
   dht.begin();
@@ -214,7 +247,7 @@ void setup() {
   currentMode = GATE_MODE;
   setModeIndicator(GATE_MODE);
   showIdleScreen();
-  Serial.println("[BOOT] Setup complete. Mode: GATE");
+  Serial.println("[BOOT] Setup complete. Mode: GATE | Servo: D32 | IR: D16");
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -228,14 +261,16 @@ void loop() {
     Serial.println("[BUZZER] Off");
   }
 
-  // ── Relay auto-close ──
+  // ── Gate auto-close (relay + servo) ──
   if (relayOpen && (now - relayOpenTime >= (unsigned long)RELAY_OPEN_MS)) {
+    closeGate();              // servo to 0°
     digitalWrite(RELAY_PIN, LOW);
     relayOpen = false;
+    gateOpen  = false;
     lcdPrint("Gate Closed", "Scan Card");
     delay(1000);
     showIdleScreen();
-    Serial.println("[RELAY] Gate closed");
+    Serial.println("[GATE] Auto-closed");
   }
 
   // ── WiFi watchdog ──
@@ -253,7 +288,6 @@ void loop() {
   // ── MODE TOGGLE via D23 Switch ─────────────────────────────────
   if (digitalRead(SWITCH_PIN) == LOW && (now - lastSwitchPress > SWITCH_DEBOUNCE_MS)) {
     lastSwitchPress = now;
-
     if (currentMode == GATE_MODE) {
       currentMode = CANTEEN_MODE;
       Serial.println("[MODE] Switched → CANTEEN");
@@ -261,10 +295,25 @@ void loop() {
       currentMode = GATE_MODE;
       Serial.println("[MODE] Switched → GATE");
     }
-
     setModeIndicator(currentMode);
     showIdleScreen();
-    delay(200); // extra debounce
+    delay(200);
+  }
+
+  // ── IR Sensor auto-gate (Gate Mode only) ──────────────────────
+  // Triggered when person walks up WITHOUT an RFID card
+  if (currentMode == GATE_MODE &&
+      digitalRead(IR_PIN) == LOW &&
+      !gateOpen &&
+      (now - lastIRTrigger > IR_COOLDOWN_MS)) {
+    lastIRTrigger = now;
+    Serial.println("[IR] Person detected → auto-opening gate");
+    lcdPrint("IR Detected!", "Auto Opening...");
+    openGate();
+    ledGrant();
+    sendIREntry();            // log to server as AUTO_ENTRY
+    delay(2500);
+    showIdleScreen();
   }
 
   // ── Scan cooldown ──
@@ -297,9 +346,9 @@ void loop() {
 
     bool granted = sendRFID(uid, "main_gate", GATE_MODE, 0);
     if (granted) {
-      openRelay();
+      openGate();     // servo 90° + relay HIGH
       ledGrant();
-      Serial.println("[GATE] Access granted – relay opened");
+      Serial.println("[GATE] Access granted – gate opened");
     } else {
       ledDeny();
       Serial.println("[GATE] Access denied");
@@ -494,10 +543,60 @@ void activateBuzzer(int durationMs) {
 }
 
 void openRelay(int durationMs) {
-  Serial.println("[RELAY] Gate open");
-  digitalWrite(RELAY_PIN, HIGH);
+  // Legacy wrapper – now calls openGate() for servo+relay
+  openGate();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  openGate – moves servo to OPEN + activates relay
+//  Auto-closes after RELAY_OPEN_MS via loop()
+// ═══════════════════════════════════════════════════════════════════
+void openGate() {
+  Serial.println("[GATE] Opening – Servo 90° + Relay HIGH");
+  gateServo.write(SERVO_OPEN);    // D32 servo → 90°
+  digitalWrite(RELAY_PIN, HIGH);  // D2 relay → ON
   relayOpen     = true;
+  gateOpen      = true;
   relayOpenTime = millis();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  closeGate – returns servo to CLOSED (0°)
+// ═══════════════════════════════════════════════════════════════════
+void closeGate() {
+  Serial.println("[GATE] Closing – Servo 0°");
+  gateServo.write(SERVO_CLOSED);  // D32 servo → 0°
+  gateOpen = false;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  sendIREntry – logs auto IR-triggered entry to /api/esp32/rfid
+//  Uses special UID "AUTO_EXIT_IR" which the backend already handles
+// ═══════════════════════════════════════════════════════════════════
+void sendIREntry() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  String url = String(SERVER_BASE) + "/api/esp32/rfid";
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("x-api-key", API_KEY);
+  http.setTimeout(6000);
+
+  // "AUTO_EXIT_IR" is already handled in the backend rfid route
+  // It creates an anonymous auto-entry log
+  StaticJsonDocument<200> doc;
+  doc["rfid_uid"]    = "AUTO_EXIT_IR";
+  doc["action"]      = "gate";
+  doc["hardware_id"] = "main_gate_ir";
+
+  String payload;
+  serializeJson(doc, payload);
+
+  Serial.printf("[HTTP] POST IR Entry: %s\n", payload.c_str());
+  int code = http.POST(payload);
+  Serial.printf("[HTTP] IR Entry response: %d\n", code);
+  http.end();
 }
 
 // ─── LED helpers ───────────────────────────────────────────────────
