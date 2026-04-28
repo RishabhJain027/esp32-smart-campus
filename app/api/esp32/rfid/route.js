@@ -3,12 +3,21 @@ import { NextResponse } from 'next/server';
 import { localDB } from '@/lib/localDB';
 import { appendToSheet } from '@/lib/sheets';
 
-// Webhook for ESP32 hardware to hit when a card is scanned
+// POST /api/esp32/rfid
+// Called by ESP32 when an RFID card is scanned.
+// Body: { rfid_uid, action, hardware_id, amount? }
+//   rfid_uid   – hex UID from card e.g. "83F4EE28"
+//   action     – "gate" | "attendance" | "canteen"  (default "gate")
+//   hardware_id– e.g. "main_gate"
+//
+// Registered cards:
+//   Piyush Bedekar  → "83 F4 EE 28"  (stored with spaces in users.json)
+//   Shravani Naik   → "23 AE D7 13"
 export async function POST(req) {
     try {
         const body = await req.json();
         const { hardware_id, rfid_uid, action } = body;
-        
+
         // action can be "attendance" or "canteen" or "gate"
         const mode = action || 'gate';
 
@@ -16,29 +25,40 @@ export async function POST(req) {
             return NextResponse.json({ error: 'Missing RFID UID' }, { status: 400 });
         }
 
-        // 1. Find user by student_id OR RFID
+        // Normalize incoming UID: strip spaces, uppercase  → "83F4EE28"
+        const normalizedUID = rfid_uid.replace(/\s/g, '').toUpperCase();
+        console.log(`[RFID] Received UID: ${normalizedUID} | mode: ${mode}`);
+
+        // 1. Find user by RFID UID (compare both sides normalized)
         const users = localDB.getStudents();
         let student = null;
-        
-        if (rfid_uid === 'AUTO_EXIT_IR') {
+
+        if (normalizedUID === 'AUTO_EXIT_IR') {
             student = { id: 'anonymous', name: 'Auto Exit (IR Sensor)', wallet_balance: 0 };
         } else if (body.student_id) {
             student = users.find(u => u.id === body.student_id);
         } else {
-            student = users.find(u => u.rfid_uid && u.rfid_uid.replace(/\s/g, '').toUpperCase() === rfid_uid.replace(/\s/g, '').toUpperCase());
+            student = users.find(u =>
+                u.rfid_uid &&
+                u.rfid_uid.replace(/\s/g, '').toUpperCase() === normalizedUID
+            );
         }
 
         if (!student) {
-            return NextResponse.json({ 
-                success: false, 
-                message: 'UNKNOWN CARD', 
-                status_code: 404 
+            console.log(`[RFID] Unknown card: ${normalizedUID}`);
+            return NextResponse.json({
+                success: false,
+                message: 'UNKNOWN CARD',
+                lcd_line1: 'UNKNOWN CARD',
+                lcd_line2: 'Not Registered',
+                status_code: 404
             });
         }
 
+        console.log(`[RFID] Matched student: ${student.name} (${student.id})`);
         const now = new Date().toISOString();
 
-        // 2. Handle Gate Entry / Attendance
+        // ── 2. Gate / Attendance ─────────────────────────────────────
         if (mode === 'gate' || mode === 'attendance') {
             const entry = {
                 id: `ent_esp_${Date.now()}`,
@@ -49,69 +69,72 @@ export async function POST(req) {
                 status: 'granted',
                 time: now
             };
-            
+
             localDB.addEntry(entry);
-            
-            // Sync to sheets
+
+            // Sync to Google Sheets (best-effort)
             try {
                 await appendToSheet([
-                    entry.id, entry.student_id, entry.name, 
-                    'Campus Entry', new Date().toISOString().split('T')[0], 
+                    entry.id, entry.student_id, entry.name,
+                    'Campus Entry', now.split('T')[0],
                     entry.status, entry.method, entry.time
                 ]);
-            } catch(e) {}
+            } catch (e) { /* non-fatal */ }
 
-            // Send WhatsApp notification for gate entry
+            // WhatsApp notification (best-effort)
             try {
                 if (student.phone) {
                     const { sendWhatsAppMessage, buildGateEntryMessage } = await import('@/lib/whatsapp');
-                    const msg = buildGateEntryMessage(student.name, hardware_id || 'Main Campus Gate', new Date().toLocaleTimeString('en-IN'), 'RFID');
+                    const msg = buildGateEntryMessage(
+                        student.name,
+                        hardware_id || 'Main Campus Gate',
+                        new Date().toLocaleTimeString('en-IN'),
+                        'RFID'
+                    );
                     await sendWhatsAppMessage(student.phone, msg);
                 }
-            } catch(e) {}
+            } catch (e) { /* non-fatal */ }
 
-            return NextResponse.json({ 
-                success: true, 
+            return NextResponse.json({
+                success: true,
                 message: `ACCESS GRANTED: ${student.name.split(' ')[0]}`,
-                lcd_line1: "ACCESS GRANTED",
+                lcd_line1: 'ACCESS GRANTED',
                 lcd_line2: student.name.substring(0, 16)
             });
         }
 
-        // 3. Handle Canteen Payment
+        // ── 3. Canteen Payment ───────────────────────────────────────
         if (mode === 'canteen') {
             const amount = parseFloat(body.amount || 0);
+
             if (student.wallet_balance < amount) {
-                return NextResponse.json({ 
-                    success: false, 
-                    message: "INSUFFICIENT FUNDS",
-                    lcd_line1: "TXN FAILED",
-                    lcd_line2: "Low Balance"
+                return NextResponse.json({
+                    success: false,
+                    message: 'INSUFFICIENT FUNDS',
+                    lcd_line1: 'TXN FAILED',
+                    lcd_line2: 'Low Balance'
                 });
             }
 
-            // Deduct balance
             const newBalance = student.wallet_balance - amount;
             localDB.updateUser(student.id, { wallet_balance: newBalance });
 
-            // Sync to sheets
             try {
-                // array format: [id, student_id, name, action, date, status, method, time]
                 await appendToSheet([
-                    `txn_${Date.now()}`, 
-                    student.id, 
-                    student.name, 
-                    `Payment: Rs.${amount}`, 
-                    new Date().toISOString().split('T')[0], 
-                    'SUCCESS', 
-                    body.rfid_uid === 'Biometric_Auth' ? 'Biometrics' : 'RFID', 
-                    new Date().toISOString()
+                    `txn_${Date.now()}`,
+                    student.id,
+                    student.name,
+                    `Payment: Rs.${amount}`,
+                    now.split('T')[0],
+                    'SUCCESS',
+                    'RFID',
+                    now
                 ]);
-            } catch(e) {}
+            } catch (e) { /* non-fatal */ }
 
-            return NextResponse.json({ 
-                success: true, 
-                message: `PAID: Rs.${amount}. Bal: Rs.${newBalance}`,
+            return NextResponse.json({
+                success: true,
+                message: `PAID Rs.${amount} | Bal Rs.${newBalance}`,
                 lcd_line1: `PAID Rs.${amount}`,
                 lcd_line2: `BAL Rs.${newBalance}`
             });
@@ -120,7 +143,7 @@ export async function POST(req) {
         return NextResponse.json({ success: false, message: 'Invalid action mode' });
 
     } catch (err) {
-        console.error('ESP32 webhook error:', err);
+        console.error('[RFID] Error:', err);
         return NextResponse.json({ error: 'Internal Hardware Server Error' }, { status: 500 });
     }
 }

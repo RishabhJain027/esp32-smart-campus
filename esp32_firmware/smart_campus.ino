@@ -1,128 +1,207 @@
+/*
+ * ===================================================================
+ *  PSR Smart Campus – ESP32 Firmware  (Updated: 2026-04-28)
+ * ===================================================================
+ *  PIN MAP (matches physical wiring):
+ *
+ *  D2  → RELAY  (gate / door lock)
+ *  D4  → BUZZER
+ *  D5  → DHT11  (temperature & humidity)
+ *  D12 → LED 1  (Green  – Access Granted)
+ *  D13 → LED 2  (Red    – Access Denied)
+ *  D14 → LED 3  (Yellow – Alert / Warning)
+ *  D15 → RFID SS/CS  (HSPI)
+ *  D18 → RFID SCK    (HSPI)
+ *  D19 → RFID MISO   (HSPI)
+ *  D21 → I2C SDA  (LCD 16×2)
+ *  D22 → I2C SCL  (LCD 16×2)
+ *  D23 → Switch / Digital Sensor
+ *  D25 → Ultrasonic TRIG
+ *  D26 → Ultrasonic ECHO
+ *  D27 → RFID RST
+ *  D33 → RFID MOSI   (HSPI)
+ *  D34 → Potentiometer (Analog Input)
+ *  D35 → LDR          (Analog Input)
+ *
+ *  RFID Cards registered:
+ *    Piyush Bedekar  → 83F4EE28
+ *    Shravani Naik   → 23AED713
+ *
+ *  Libraries required:
+ *    MFRC522, ArduinoJson, LiquidCrystal_I2C,
+ *    DHT sensor library (Adafruit)
+ * ===================================================================
+ */
+
 #include <ArduinoJson.h>
+#include <DHT.h>
 #include <HTTPClient.h>
 #include <LiquidCrystal_I2C.h>
 #include <MFRC522.h>
 #include <SPI.h>
 #include <WiFi.h>
 #include <Wire.h>
-#include <ESP32Servo.h>
 
-// ── WIFI CONFIG ────────────────────────────────────────────────
-const char *WIFI_SSID = "One";
+// ── WIFI CONFIG ────────────────────────────────────────────────────
+const char *WIFI_SSID     = "One";
 const char *WIFI_PASSWORD = "12345678";
 
-// ── SERVER CONFIG ─────────────────────────────────────────────
-const char *SERVER_BASE =
-    "https://psr-campus.onrender.com"; // deployed cloud backend
-const char *API_KEY =
-    "esp32_secret_2026"; // must match ESP32_API_KEY in .env.local
+// ── SERVER CONFIG ──────────────────────────────────────────────────
+const char *SERVER_BASE = "https://psr-campus.onrender.com";
+const char *API_KEY     = "esp32_secret_2026";
 
-// ── PIN DEFINITIONS ───────────────────────────────────────────
-// RFID SPI
-#define SS_PIN 5  // SDA / CS
-#define RST_PIN 4 // Reset 
+// ── PIN DEFINITIONS ────────────────────────────────────────────────
+#define RELAY_PIN       2
+#define BUZZER_PIN      4
+#define DHT_PIN         5
+
+#define LED_GREEN_PIN  12   // LED 1 – Access Granted
+#define LED_RED_PIN    13   // LED 2 – Access Denied
+#define LED_ALERT_PIN  14   // LED 3 – Alert / Warning
+
+// RFID – HSPI (avoids conflict with D23 switch & D5 DHT)
+#define RFID_SS_PIN    15
+#define RFID_RST_PIN   27
+#define RFID_SCK_PIN   18
+#define RFID_MISO_PIN  19
+#define RFID_MOSI_PIN  33
+
+// I2C LCD
+#define I2C_SDA_PIN    21
+#define I2C_SCL_PIN    22
+
+// Digital Sensor / Switch
+#define SWITCH_PIN     23
 
 // Ultrasonic HC-SR04
-#define TRIG_PIN 12
-#define ECHO_PIN 14
+#define TRIG_PIN       25
+#define ECHO_PIN       26
 
-// Buzzer
-#define BUZZER_PIN 27
+// Analog Inputs
+#define POT_PIN        34   // Potentiometer
+#define LDR_PIN        35   // LDR
 
-// LED status
-#define LED_GREEN_PIN 26
-#define LED_RED_PIN 25
+// ── THRESHOLDS ─────────────────────────────────────────────────────
+#define PERSON_DIST_CM       100
+#define MULTI_PERSON_THRESH  2
+#define BUZZER_DURATION_MS   3000
+#define RELAY_OPEN_MS        3000
+#define SCAN_COOLDOWN_MS     3000
+#define SENSOR_REPORT_MS    30000   // Send env sensors every 30 s
 
-// IR Sensor & Servo
-#define IR_PIN 13
-#define SERVO_PIN 15
+// ── OBJECTS ────────────────────────────────────────────────────────
+SPIClass hspi(HSPI);
+MFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+DHT dht(DHT_PIN, DHT11);
 
-// ── THRESHOLDS ────────────────────────────────────────────────
-#define PERSON_DISTANCE_CM 100   // Max distance to count as "person present"
-#define MULTI_PERSON_THRESHOLD 2 // Buzzer triggers if ≥ 2 persons detected
-#define BUZZER_DURATION_MS 3000  // Buzzer on for 3 seconds
-#define SCAN_COOLDOWN_MS 3000    // Prevent re-scan within 3 seconds
-#define SERVO_OPEN_MS 3000       // Servo stays open for 3 seconds
+// ── STATE ──────────────────────────────────────────────────────────
+unsigned long lastScanTime     = 0;
+unsigned long buzzerStartTime  = 0;
+unsigned long relayOpenTime    = 0;
+unsigned long lastSensorReport = 0;
+bool buzzerActive  = false;
+bool relayOpen     = false;
 
-// ── OBJECTS ───────────────────────────────────────────────────
-MFRC522 rfid(SS_PIN, RST_PIN);
-LiquidCrystal_I2C lcd(0x27, 16, 2); 
-Servo gateServo;
+// ── FUNCTION PROTOTYPES ────────────────────────────────────────────
+String   readRFID();
+int      countPersons();
+bool     sendRFID(String uid, String gate_id);
+void     sendSensorData();
+void     activateBuzzer(int durationMs = BUZZER_DURATION_MS);
+void     openRelay(int durationMs = RELAY_OPEN_MS);
+void     ledGrant();
+void     ledDeny();
+void     ledAlert();
+void     lcdPrint(String l1, String l2 = "");
+void     reconnectWiFi();
 
-// State
-unsigned long lastScanTime = 0;
-bool buzzerActive = false;
-unsigned long buzzerStartTime = 0;
-
-bool gateOpen = false;
-unsigned long gateOpenTime = 0;
-
-// ── PROTOTYPES ────────────────────────────────────────────────
-String readRFID();
-int countPersons();
-void sendAttendance(String uid, int personCount);
-void activateBuzzer();
-void lcdPrint(String line1, String line2 = "");
-void ledStatus(bool success);
-void reconnectWiFi();
-
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 void setup() {
   Serial.begin(115200);
+  Serial.println("\n[BOOT] PSR Smart Campus ESP32 starting...");
 
-  // Pin setup
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
-  pinMode(BUZZER_PIN, OUTPUT);
+  // ── Output pins ──
+  pinMode(RELAY_PIN,     OUTPUT);
+  pinMode(BUZZER_PIN,    OUTPUT);
   pinMode(LED_GREEN_PIN, OUTPUT);
-  pinMode(LED_RED_PIN, OUTPUT);
-  pinMode(IR_PIN, INPUT); // IR Sensor
+  pinMode(LED_RED_PIN,   OUTPUT);
+  pinMode(LED_ALERT_PIN, OUTPUT);
 
-  digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(RELAY_PIN,     LOW);
+  digitalWrite(BUZZER_PIN,    LOW);
   digitalWrite(LED_GREEN_PIN, LOW);
-  digitalWrite(LED_RED_PIN, LOW);
+  digitalWrite(LED_RED_PIN,   LOW);
+  digitalWrite(LED_ALERT_PIN, LOW);
 
-  // Servo Init
-  gateServo.attach(SERVO_PIN);
-  gateServo.write(0); // Initialize closed
+  // ── Input pins ──
+  pinMode(SWITCH_PIN, INPUT_PULLUP);
+  pinMode(TRIG_PIN,   OUTPUT);
+  pinMode(ECHO_PIN,   INPUT);
+  // D34, D35 are input-only, no pinMode needed
 
-  // LCD init
-  Wire.begin(21, 22); // SDA=21, SCL=22
+  // ── LCD ──
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   lcd.init();
   lcd.backlight();
   lcdPrint("PSR Campus", "Booting...");
 
-  // SPI + RFID init
-  SPI.begin();
-  rfid.PCD_Init();
+  // ── DHT11 ──
+  dht.begin();
+  Serial.println("[DHT] DHT11 initialized on D5");
 
-  // WiFi connect
+  // ── RFID via HSPI ──
+  hspi.begin(RFID_SCK_PIN, RFID_MISO_PIN, RFID_MOSI_PIN, RFID_SS_PIN);
+  rfid.PCD_Init(&hspi);
+  rfid.PCD_DumpVersionToSerial();
+  Serial.println("[RFID] MFRC522 initialized (HSPI)");
+
+  // ── WiFi ──
   lcdPrint("Connecting WiFi", "...");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
+  int attempts = 0;
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
+    Serial.print(".");
+    if (++attempts > 30) {
+      Serial.println("\n[WiFi] Timeout – restarting");
+      ESP.restart();
+    }
   }
-
   String ip = WiFi.localIP().toString();
-  lcdPrint("WiFi Connected!", ip.c_str());
+  Serial.printf("\n[WiFi] Connected! IP: %s\n", ip.c_str());
+  lcdPrint("WiFi OK!", ip.c_str());
   delay(2000);
-  lcdPrint("Ready: IR/RFID", "Awaiting Entry");
+
+  // ── Startup LED test ──
+  digitalWrite(LED_GREEN_PIN, HIGH); delay(300);
+  digitalWrite(LED_GREEN_PIN, LOW);
+  digitalWrite(LED_RED_PIN,   HIGH); delay(300);
+  digitalWrite(LED_RED_PIN,   LOW);
+  digitalWrite(LED_ALERT_PIN, HIGH); delay(300);
+  digitalWrite(LED_ALERT_PIN, LOW);
+
+  lcdPrint("Scan RFID Card", "Ready...");
+  Serial.println("[BOOT] Setup complete. Awaiting RFID...");
 }
 
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 void loop() {
-  // ── Handle buzzer timeout ──
-  if (buzzerActive && (millis() - buzzerStartTime >= BUZZER_DURATION_MS)) {
+  unsigned long now = millis();
+
+  // ── Buzzer auto-off ──
+  if (buzzerActive && (now - buzzerStartTime >= (unsigned long)BUZZER_DURATION_MS)) {
     digitalWrite(BUZZER_PIN, LOW);
     buzzerActive = false;
+    Serial.println("[BUZZER] Off");
   }
 
-  // ── Handle Servo timeout ──
-  if (gateOpen && (millis() - gateOpenTime >= SERVO_OPEN_MS)) {
-    gateServo.write(0); // Close gate
-    gateOpen = false;
-    lcdPrint("Gate Closed", "Ready");
+  // ── Relay auto-close ──
+  if (relayOpen && (now - relayOpenTime >= (unsigned long)RELAY_OPEN_MS)) {
+    digitalWrite(RELAY_PIN, LOW);
+    relayOpen = false;
+    lcdPrint("Gate Closed", "Scan Card");
+    Serial.println("[RELAY] Gate closed");
   }
 
   // ── WiFi watchdog ──
@@ -131,105 +210,108 @@ void loop() {
     return;
   }
 
+  // ── Periodic env sensor report ──
+  if (now - lastSensorReport >= SENSOR_REPORT_MS) {
+    sendSensorData();
+    lastSensorReport = now;
+  }
+
+  // ── Switch / Digital Sensor check ──
+  if (digitalRead(SWITCH_PIN) == LOW) {
+    Serial.println("[SWITCH] Pressed!");
+    // Can be used for manual gate override or alarm reset
+    if (buzzerActive) {
+      digitalWrite(BUZZER_PIN, LOW);
+      buzzerActive = false;
+      Serial.println("[SWITCH] Buzzer manually silenced");
+    }
+    delay(200); // debounce
+  }
+
   // ── Scan cooldown ──
-  if (millis() - lastScanTime < SCAN_COOLDOWN_MS)
-    return;
+  if (now - lastScanTime < SCAN_COOLDOWN_MS) return;
 
-  // ── Handle IR Auto-Entry Logic ──
-  // Assuming IR sensor returns LOW when an object is detected
-  if (digitalRead(IR_PIN) == LOW && !gateOpen) {
-      Serial.println("[IR] Human detected at Automated Gate!");
-      gateServo.write(90); // Open gate
-      gateOpen = true;
-      gateOpenTime = millis();
-      lastScanTime = millis();
-      
-      // Ultrasonic detection during the 3-sec window
-      int personCount = countPersons();
-      Serial.printf("[SENSOR] Persons detected during IR open: %d\n", personCount);
-      
-      if (personCount >= MULTI_PERSON_THRESHOLD) {
-          activateBuzzer();
-          lcdPrint("SECURITY ALERT!", "Multiple Persons");
-          ledStatus(false);
-      } else {
-          lcdPrint("Auto Exit Open", "Proceed Slowly");
-          ledStatus(true);
-      }
-
-      // Log auto exit to Google Sheets via backend
-      sendAttendance("AUTO_EXIT_IR", personCount);
-      return;
-  }
-
-  // ── Wait for RFID card ──
+  // ── RFID scan ──
   if (!rfid.PICC_IsNewCardPresent()) return;
-  if (!rfid.PICC_ReadCardSerial()) return;
+  if (!rfid.PICC_ReadCardSerial())   return;
 
-  // ── Read UID ──
   String uid = readRFID();
-  lastScanTime = millis();
+  Serial.printf("[RFID] Card: %s\n", uid.c_str());
+  lastScanTime = now;
 
-  int personCount = countPersons();
-  lcdPrint("Card: " + uid, "Verifying...");
+  lcdPrint("Card: " + uid, "Checking...");
 
-  if (personCount >= MULTI_PERSON_THRESHOLD) {
-    lcdPrint("SECURITY ALERT!", "Multiple Persons");
+  // ── Person count via ultrasonic ──
+  int persons = countPersons();
+  Serial.printf("[ULTRA] Persons detected: %d\n", persons);
+
+  if (persons >= MULTI_PERSON_THRESH) {
+    lcdPrint("SECURITY ALERT!", "Multi-Person!");
+    ledAlert();
     activateBuzzer();
-    ledStatus(false);
+    Serial.println("[SECURITY] Tailgate alert!");
   }
 
-  sendAttendance(uid, personCount);
+  // ── Send to server ──
+  bool granted = sendRFID(uid, "main_gate");
 
-  // Stop RFID
+  if (granted) {
+    openRelay();
+    ledGrant();
+    Serial.println("[GATE] Access granted – relay opened");
+  } else {
+    ledDeny();
+    Serial.println("[GATE] Access denied");
+  }
+
+  // ── Stop RFID ──
   rfid.PICC_HaltA();
   rfid.PCD_StopCrypto1();
 }
 
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+//  Read RFID UID as uppercase hex string  e.g. "83F4EE28"
+// ═══════════════════════════════════════════════════════════════════
 String readRFID() {
   String uid = "";
   for (byte i = 0; i < rfid.uid.size; i++) {
-    if (rfid.uid.uidByte[i] < 0x10)
-      uid += "0";
+    if (rfid.uid.uidByte[i] < 0x10) uid += "0";
     uid += String(rfid.uid.uidByte[i], HEX);
   }
   uid.toUpperCase();
   return uid;
 }
 
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+//  Ultrasonic HC-SR04 – returns approx person count
+// ═══════════════════════════════════════════════════════════════════
 int countPersons() {
-  // Fire ultrasonic pulse
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
-  long duration = pulseIn(ECHO_PIN, HIGH, 30000); // 30ms timeout
-  float distance = (duration * 0.0343) / 2.0;
+  long dur = pulseIn(ECHO_PIN, HIGH, 30000);
+  float dist = (dur * 0.0343f) / 2.0f;
+  Serial.printf("[ULTRA] Distance: %.1f cm\n", dist);
 
-  Serial.printf("[SENSOR] Distance: %.1f cm\n", distance);
-
-  // Only count if within range
-  if (distance > 0 && distance < PERSON_DISTANCE_CM) {
-    // Basic 1-person vs multi detection:
-    // For real tailgating detection, use 2 sensors or IR beam
-    // Here we use a simple heuristic: very short distance = extra person behind
-    if (distance < 40)
-      return 2; // Someone too close = possible tailgating
-    return 1;
+  if (dist > 0 && dist < PERSON_DIST_CM) {
+    return (dist < 40) ? 2 : 1;
   }
   return 0;
 }
 
-// ═══════════════════════════════════════════════════════════════
-void sendAttendance(String uid, int personCount) {
+// ═══════════════════════════════════════════════════════════════════
+//  POST RFID scan → /api/esp32/rfid
+//  Sends: { rfid_uid, action, hardware_id }
+//  Reads: { success, lcd_line1, lcd_line2 }
+//  Piyush: 83F4EE28  |  Shravani: 23AED713
+// ═══════════════════════════════════════════════════════════════════
+bool sendRFID(String uid, String gate_id) {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[HTTP] No WiFi, skipping API call");
-    lcdPrint("WiFi Error!", "No Connection");
-    return;
+    lcdPrint("No WiFi!", "Offline");
+    return false;
   }
 
   HTTPClient http;
@@ -237,195 +319,217 @@ void sendAttendance(String uid, int personCount) {
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("x-api-key", API_KEY);
-  http.setTimeout(8000); // 8 second timeout
+  http.setTimeout(8000);
 
-  // Build JSON payload
   StaticJsonDocument<256> doc;
-  doc["rfid"] = uid;
-  doc["sensor_count"] = personCount;
-  doc["gate_id"] = "main_gate";
+  doc["rfid_uid"]    = uid;        // e.g. "83F4EE28"
+  doc["action"]      = "gate";
+  doc["hardware_id"] = gate_id;
 
   String payload;
   serializeJson(doc, payload);
 
-  Serial.printf("[HTTP] POST %s\n", url.c_str());
-  Serial.printf("[HTTP] Payload: %s\n", payload.c_str());
+  Serial.printf("[HTTP] POST %s → %s\n", url.c_str(), payload.c_str());
+  int code = http.POST(payload);
+  bool granted = false;
 
-  int httpCode = http.POST(payload);
+  if (code == 200 || code == 201) {
+    String resp = http.getString();
+    Serial.printf("[HTTP] %d → %s\n", code, resp.c_str());
 
-  if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
-    String response = http.getString();
-    Serial.printf("[HTTP] Response (%d): %s\n", httpCode, response.c_str());
-
-    // Parse response
     StaticJsonDocument<512> res;
-    DeserializationError err = deserializeJson(res, response);
-
-    if (!err) {
-      bool success = res["success"].as<bool>();
-      String message = res["message"].as<String>();
-      String name = res["student"]["name"].as<String>();
-      String action = res["gate_action"].as<String>();
-      bool alert = res["security_alert"].as<bool>();
-
-      if (action == "allow") {
-        lcdPrint("Access Granted", name.length() > 0 ? name : "Welcome!");
-        ledStatus(true);
-        Serial.printf("[GATE] Access granted for: %s\n", name.c_str());
-      } else {
-        lcdPrint("Access Denied", message.length() > 0 ? message : "Try again");
-        ledStatus(false);
-        Serial.println("[GATE] Access denied");
-      }
-
-      if (alert) {
-        activateBuzzer();
-        lcdPrint("ALERT! Multi-", "Person Detected");
-      }
+    if (!deserializeJson(res, resp)) {
+      granted = res["success"].as<bool>();
+      String l1 = res["lcd_line1"] | (granted ? "ACCESS GRANTED" : "ACCESS DENIED");
+      String l2 = res["lcd_line2"] | "";
+      lcdPrint(l1, l2);
+      delay(2000);
     }
-  } else if (httpCode == 404) {
-    Serial.println("[HTTP] RFID not registered");
-    lcdPrint("Card Not Found!", "Register First");
-    ledStatus(false);
+  } else if (code == 404) {
+    Serial.println("[HTTP] Unknown card");
+    lcdPrint("UNKNOWN CARD", "Not Registered");
+    delay(2000);
   } else {
-    Serial.printf("[HTTP] Error code: %d\n", httpCode);
-    lcdPrint("Server Error", String(httpCode));
-    ledStatus(false);
+    Serial.printf("[HTTP] Error: %d\n", code);
+    lcdPrint("Server Error", String(code));
+    delay(2000);
   }
 
   http.end();
-  delay(2000);
-  lcdPrint("Scan RFID Card", "or Face to Enter");
+  lcdPrint("Scan RFID Card", "Ready...");
+  return granted;
 }
 
-// ═══════════════════════════════════════════════════════════════
-void activateBuzzer() {
-  Serial.println("[BUZZER] ACTIVATED");
+// ═══════════════════════════════════════════════════════════════════
+//  POST env sensor data → /api/esp32/sensors
+//  DHT11 (temp + humidity), LDR (light), Potentiometer
+// ═══════════════════════════════════════════════════════════════════
+void sendSensorData() {
+  float temp  = dht.readTemperature();
+  float humid = dht.readHumidity();
+  int   ldr   = analogRead(LDR_PIN);
+  int   pot   = analogRead(POT_PIN);
+
+  Serial.printf("[DHT]  Temp: %.1f°C  Humid: %.1f%%\n", temp, humid);
+  Serial.printf("[LDR]  Raw: %d\n", ldr);
+  Serial.printf("[POT]  Raw: %d\n", pot);
+
+  if (isnan(temp) || isnan(humid)) {
+    Serial.println("[DHT] Read failed – skipping HTTP");
+    return;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  String url = String(SERVER_BASE) + "/api/esp32/sensors";
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("x-api-key", API_KEY);
+  http.setTimeout(6000);
+
+  StaticJsonDocument<256> doc;
+  doc["temperature"] = temp;
+  doc["humidity"]    = humid;
+  doc["ldr"]         = ldr;
+  doc["pot"]         = pot;
+  doc["hardware_id"] = "main_gate";
+
+  String payload;
+  serializeJson(doc, payload);
+
+  Serial.printf("[HTTP] POST %s (sensors)\n", url.c_str());
+  int code = http.POST(payload);
+  Serial.printf("[HTTP] Sensors response: %d\n", code);
+  http.end();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Actuators
+// ═══════════════════════════════════════════════════════════════════
+void activateBuzzer(int durationMs) {
+  Serial.println("[BUZZER] ON");
   digitalWrite(BUZZER_PIN, HIGH);
-  buzzerActive = true;
-  buzzerStartTime = millis();
+  buzzerActive     = true;
+  buzzerStartTime  = millis();
 }
 
-// ═══════════════════════════════════════════════════════════════
-void ledStatus(bool success) {
-  if (success) {
-    digitalWrite(LED_GREEN_PIN, HIGH);
-    delay(1500);
-    digitalWrite(LED_GREEN_PIN, LOW);
-  } else {
-    for (int i = 0; i < 3; i++) {
-      digitalWrite(LED_RED_PIN, HIGH);
-      delay(150);
-      digitalWrite(LED_RED_PIN, LOW);
-      delay(150);
-    }
+void openRelay(int durationMs) {
+  Serial.println("[RELAY] Gate open");
+  digitalWrite(RELAY_PIN, HIGH);
+  relayOpen     = true;
+  relayOpenTime = millis();
+}
+
+// ─── LED helpers ───────────────────────────────────────────────────
+void ledGrant() {
+  // Green ON for 1.5 s (non-blocking handled by state or just blocking here)
+  digitalWrite(LED_GREEN_PIN, HIGH);
+  delay(1500);
+  digitalWrite(LED_GREEN_PIN, LOW);
+}
+
+void ledDeny() {
+  // Red blink 3×
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(LED_RED_PIN, HIGH); delay(150);
+    digitalWrite(LED_RED_PIN, LOW);  delay(150);
   }
 }
 
-// ═══════════════════════════════════════════════════════════════
-void lcdPrint(String line1, String line2) {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print(line1.substring(0, 16));
-  lcd.setCursor(0, 1);
-  lcd.print(line2.substring(0, 16));
+void ledAlert() {
+  // Yellow/Alert blink 5×
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(LED_ALERT_PIN, HIGH); delay(100);
+    digitalWrite(LED_ALERT_PIN, LOW);  delay(100);
+  }
 }
 
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+//  LCD helper (truncates to 16 chars per line)
+// ═══════════════════════════════════════════════════════════════════
+void lcdPrint(String l1, String l2) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(l1.substring(0, 16));
+  lcd.setCursor(0, 1);
+  lcd.print(l2.substring(0, 16));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  WiFi watchdog
+// ═══════════════════════════════════════════════════════════════════
 void reconnectWiFi() {
   Serial.println("[WiFi] Reconnecting...");
   lcdPrint("WiFi Lost!", "Reconnecting...");
   WiFi.disconnect();
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    attempts++;
+  int a = 0;
+  while (WiFi.status() != WL_CONNECTED && a < 20) {
+    delay(500); a++;
   }
-
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("[WiFi] Reconnected!");
     lcdPrint("WiFi Restored!", WiFi.localIP().toString());
     delay(1000);
-    lcdPrint("Scan RFID Card", "or Face to Enter");
+    lcdPrint("Scan RFID Card", "Ready...");
   }
 }
 
 /*
  * ===================================================================
- *  WIRING REFERENCE
+ *  WIRING REFERENCE  (matches users actual breadboard)
  * ===================================================================
  *
- *  MFRC522 RFID READER (SPI Bus):
- *  ┌─────────┬───────────┐
- *  │ RFID    │ ESP32     │
- *  ├─────────┼───────────┤
- *  │ SDA/CS  │ GPIO 5    │
- *  │ SCK     │ GPIO 18   │
- *  │ MOSI    │ GPIO 23   │
- *  │ MISO    │ GPIO 19   │
- *  │ RST     │ GPIO 22   │
- *  │ GND     │ GND       │
- *  │ 3.3V    │ 3.3V      │
- *  └─────────┴───────────┘
+ *  MFRC522 RFID (HSPI – avoids D23/D5 conflicts):
+ *  ┌──────────┬───────────┐
+ *  │ RFID     │ ESP32     │
+ *  ├──────────┼───────────┤
+ *  │ SDA/CS   │ D15       │
+ *  │ SCK      │ D18       │
+ *  │ MOSI     │ D33       │
+ *  │ MISO     │ D19       │
+ *  │ RST      │ D27       │
+ *  │ GND      │ GND       │
+ *  │ 3.3V     │ 3.3V      │
+ *  └──────────┴───────────┘
  *
- *  HC-SR05 ULTRASONIC SENSOR:
- *  ┌─────────┬───────────┐
- *  │ Sensor  │ ESP32     │
- *  ├─────────┼───────────┤
- *  │ VCC     │ 5V (VIN)* │
- *  │ GND     │ GND       │
- *  │ TRIG    │ GPIO 12   │
- *  │ ECHO    │ GPIO 14   │
- *  │ OUT     │ (Not used)│
- *  └─────────┴───────────┘
+ *  DHT11:  DATA → D5  | VCC → 3.3V | GND → GND
  *
- *  BUZZER:
- *  ┌───────────┬───────────┐
- *  │ Buzzer +  │ GPIO 27   │
- *  │ Buzzer -  │ GND       │
- *  └───────────┴───────────┘
+ *  Ultrasonic HC-SR04:
+ *  TRIG → D25 | ECHO → D26 | VCC → 5V | GND → GND
  *
- *  LCD I2C (16x2):
- *  ┌─────────┬───────────┐
- *  │ LCD     │ ESP32     │
- *  ├─────────┼───────────┤
- *  │ SDA     │ GPIO 21   │
- *  │ SCL     │ GPIO 22   │
- *  │ VCC     │ 5V*       │
- *  │ GND     │ GND       │
- *  └─────────┴───────────┘
+ *  LCD I2C 16x2:
+ *  SDA → D21 | SCL → D22 | VCC → 5V | GND → GND
  *
- *  IR SENSOR & SERVO:
- *  IR OUT   → GPIO 13
- *  SERVO IN → GPIO 15
- *  Servo & IR VCC → *External 5V Power Supply*
- *
- *  LED INDICATORS:
- *  Green LED (+) → GPIO 26 → 220Ω resistor → GND
- *  Red   LED (+) → GPIO 25 → 220Ω resistor → GND
+ *  RELAY:      IN → D2  | VCC → 5V | GND → GND
+ *  BUZZER:     (+) → D4 | (-) → GND
+ *  LED Green:  (+) → D12 → 220Ω → GND
+ *  LED Red:    (+) → D13 → 220Ω → GND
+ *  LED Yellow: (+) → D14 → 220Ω → GND
+ *  Switch:     One leg → D23 | Other → GND  (INPUT_PULLUP)
+ *  Pot:        Wiper → D34 | VCC → 3.3V | GND → GND
+ *  LDR:        Divider out → D35 | VCC → 3.3V | GND → GND
  *
  * ===================================================================
- *  CRITICAL WIRING NOTE (EXTERNAL POWER & COMMON GROUND):
+ *  REGISTERED RFID CARDS
  * ===================================================================
- *  Because the ESP32 cannot supply enough current for the Servo and 
- *  I2C LCD simultaneously, you MUST use an external 5V power supply.
- *  
- *  RULE 1: Connect the (+) of the external supply ONLY to the Servo, 
- *          LCD, and IR Sensor VCC pins. DO NOT connect it into the 
- *          ESP32 3V3 Pin!
- *  RULE 2: MUST COMMON GROUND! You MUST connect the GND of the external
- *          power supply to the GND pin of the ESP32. If you don't form 
- *          a common ground, the data pulses (PWM) will not work.
+ *  Piyush Bedekar  UID: 83F4EE28   (stored: "83 F4 EE 28")
+ *  Shravani Naik   UID: 23AED713   (stored: "23 AE D7 13")
+ *
  * ===================================================================
- *  DEPLOYMENT STEPS
+ *  LIBRARIES (Arduino IDE Library Manager)
  * ===================================================================
- *  1. Install Arduino IDE + ESP32 board package
- *  2. Install libraries: MFRC522, ArduinoJson, LiquidCrystal_I2C, ESP32Servo
- *  3. Set WIFI_SSID, WIFI_PASSWORD
- *  4. Select: Tools → Board → ESP32 Dev Module
- *  5. Select: Tools → Port → COMx (your ESP32 port)
- *  6. Upload and open Serial Monitor at 115200 baud
+ *  - MFRC522          (miguelbalboa)
+ *  - ArduinoJson      (Benoit Blanchon)
+ *  - LiquidCrystal_I2C (Frank de Brabander)
+ *  - DHT sensor library (Adafruit)
+ *  - Adafruit Unified Sensor (dependency)
+ * ===================================================================
+ *  UPLOAD SETTINGS
+ * ===================================================================
+ *  Board  : ESP32 Dev Module
+ *  Port   : COMx
+ *  Baud   : 115200
  * ===================================================================
  */
